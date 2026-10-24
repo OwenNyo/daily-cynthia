@@ -1,4 +1,5 @@
-import { Dex, PRNG, type Battle, type Pokemon as SimPokemon, type PokemonSet } from '@pkmn/sim';
+import type { Battle as ClientBattle, Pokemon as ClientPokemon } from '@pkmn/client';
+import { Dex, PRNG, type Battle, type PokemonSet } from '@pkmn/sim';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createBattle, p1Pending, replay, submit, summary, type Summary } from '../game/battle';
@@ -9,10 +10,10 @@ import { validName } from '../game/name';
 import { shareText } from '../game/share';
 import { computeStats } from '../game/stats';
 import { dailyTeam } from '../game/teams';
-import { getLeaderboard, getStats, postResult, type LeaderRow, type Stats } from './api';
-import { formatLog, groupLog, type LogGroup } from './log';
+import { getLeaderboard, getStats, postResult, type LeaderRow, type ResultBody, type Stats } from './api';
+import { clientBattle, groupLog, logSteps, p1Lines, TURN, type LogGroup } from './log';
 import { spritePath } from './sprites';
-import { finishOfficial, load, save, withName, type Save } from './storage';
+import { finishOfficial, KEY, load, save, update, withName, type Save } from './storage';
 
 const dex = Dex.forGen(4);
 type CalcMon = ReturnType<typeof toCalc>;
@@ -40,8 +41,6 @@ function bestHit(attacker: CalcMon, defender: CalcMon, moves: string[]): { move:
   return best;
 }
 
-const liveMoves = (p: SimPokemon) => p.moveSlots.map(s => slotMoveId(p, s.id));
-
 // Gen 4 type colours: background and text. From the mockup's table, plus the five types it did not use.
 const TYPE: Record<string, [string, string]> = {
   Normal: ['#A8A878', '#1D1B2B'], Fire: ['#F08030', '#1D1B2B'], Water: ['#6890F0', '#1D1B2B'], Electric: ['#F8D030', '#1D1B2B'],
@@ -50,7 +49,11 @@ const TYPE: Record<string, [string, string]> = {
   Rock: ['#B8A038', '#1D1B2B'], Ghost: ['#705898', '#FFFFFF'], Dragon: ['#7038F8', '#FFFFFF'], Dark: ['#705848', '#FFFFFF'],
   Steel: ['#B8B8D0', '#1D1B2B'], '???': ['#68A090', '#1D1B2B'],
 };
-const typeStyle = (t: string) => `--t:${TYPE[t][0]};--tf:${TYPE[t][1]}`;
+// The recharge turn's pseudo-move "recharge" has no type; it gets the '???' colours.
+export const typeStyle = (t: string) => {
+  const [bg, fg] = TYPE[t] ?? TYPE['???'];
+  return `--t:${bg};--tf:${fg}`;
+};
 
 const STATUS: Record<string, string> = {
   brn: 'Burned', par: 'Paralyzed', slp: 'Asleep', frz: 'Frozen', psn: 'Poisoned', tox: 'Badly poisoned',
@@ -60,22 +63,38 @@ const hpColor = (pct: number) => (pct < 20 ? 'var(--hp-red)' : pct < 50 ? 'var(-
 
 type Live = { battle: Battle; official: boolean; done?: Summary };
 
+const resultBody = (s: Save, done: Summary): ResultBody => {
+  const { date, lead, choices } = s.current!;
+  return {
+    date, playerId: s.playerId, name: s.name, won: done.won, fainted: done.p1Fainted.filter(Boolean).length,
+    turns: done.turns, seed: seedFor(date, 1), lead, choices,
+  };
+};
+
 // An official battle in progress is rebuilt from its saved choices. If that fails, it counts as a loss (spec A9).
-// A battle from an earlier day also resumes: the page keeps that day until it ends, then "Back to home" reloads today.
-function resume(s: Save): { s: Save; live: Live | null } {
+// If the rebuilt battle has already ended (the tab closed before the result was saved), the result is recorded now
+// and `post` is the body to send. A battle from an earlier day also resumes: the page keeps that day until it ends,
+// then "Back to home" reloads today.
+export function resume(s: Save): { s: Save; live: Live | null; post?: ResultBody } {
   if (!s.current) return { s, live: null };
   const { date, lead, choices } = s.current;
+  let battle: Battle;
   try {
-    return { s, live: { battle: replay(seedFor(date, 1), dailyTeam(date), lead, choices), official: true } };
+    battle = replay(seedFor(date, 1), dailyTeam(date), lead, choices);
   } catch (e) {
     console.error('resume failed, recording a loss', e);
-    const lost = finishOfficial(s, false);
-    save(lost);
-    return { s: lost, live: null };
+    return { s: finishOfficial(s), live: null };
   }
+  if (!battle.ended) return { s, live: { battle, official: true } };
+  const done = summary(battle);
+  return { s: finishOfficial(s, done), live: { battle, official: true, done }, post: resultBody(s, done) };
 }
 
+// Another tab has played or finished this official battle since this tab last saved it.
+export const staleOfficial = (mine: Save, latest: Save) => JSON.stringify(mine.current) !== JSON.stringify(latest.current);
+
 const isToday = (date: string) => localDate(new Date()) === date;
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Own component so the per-second tick does not re-render the battle.
 function Countdown({ date, busy }: { date: string; busy: boolean }) {
@@ -111,20 +130,59 @@ function MusicToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
+// What the bottom screen offers. Kept from before a choice so it stays on screen, locked, while the turn plays.
+type MoveItem = { id: string; pp?: string; label?: string; disabled: boolean };
+type Menu = { kind: 'moves'; moves: MoveItem[]; trapped: boolean } | { kind: 'switch'; forced: boolean } | { kind: 'wait' };
+
+function menuOf(battle: Battle, switching: boolean): Menu {
+  const pending = p1Pending(battle);
+  if (pending === 'switch' || (pending === 'move' && switching)) return { kind: 'switch', forced: pending === 'switch' };
+  if (pending !== 'move') return { kind: 'wait' };
+  const mine = battle.p1.active[0];
+  const foe = battle.p2.active[0];
+  const req = battle.p1.activeRequest as any;
+  const moves = (req.active[0].moves as { id: string; pp?: number; maxpp?: number; disabled?: boolean }[]).map(m => {
+    const id = slotMoveId(mine, m.id);
+    return {
+      id, disabled: !!m.disabled,
+      pp: m.maxpp !== undefined ? `${m.pp}/${m.maxpp}` : undefined,
+      label: id === 'recharge' ? undefined : dmgLabel(id, damagePct(fromSim(mine), fromSim(foe), id)),
+    };
+  });
+  return { kind: 'moves', moves, trapped: !!req.active[0].trapped };
+}
+
+type Hit = { foe: boolean; mine: boolean; step: number };
+
+// Turn playback: `shown` is how many log steps are on screen; `menu` is the bottom screen from before the choice.
+type Playback = { shown: number; menu: Menu };
+
+// One more message; a turn header comes along with the message after it. null means the whole log is shown.
+function advance(steps: { text: string }[], shown: number): number | null {
+  let n = shown + 1;
+  while (n < steps.length && TURN.test(steps[n - 1].text)) n++;
+  return n >= steps.length ? null : n;
+}
+
 export function App() {
-  const [init] = useState(() => resume(load()));
+  const [init] = useState(() => {
+    const loaded = load();
+    const r = resume(loaded);
+    if (r.s !== loaded) save(r.s);
+    // The page keeps the date it loaded with, or the start date of a resumed official battle.
+    return { ...r, date: r.live ? loaded.current!.date : localDate(new Date()), lead: r.live ? loaded.current!.lead : 0 };
+  });
   const [store, setStore] = useState<Save>(init.s);
   const [live, setLive] = useState<Live | null>(init.live);
-  // The page keeps the date it loaded with, or the start date of a resumed official battle.
-  const [date] = useState(() => init.s.current?.date ?? localDate(new Date()));
+  const [date] = useState(init.date);
   const [team] = useState(() => dailyTeam(date));
-  const [lead, setLead] = useState(init.s.current?.lead ?? 0);
-  const [, setTick] = useState(0);
+  const [lead, setLead] = useState(init.lead);
   const [nameInput, setNameInput] = useState(init.s.name);
   const [global, setGlobal] = useState<Stats | null>(null);
   const [board, setBoard] = useState<LeaderRow[] | null>(null);
   const [switching, setSwitching] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [play, setPlay] = useState<Playback | null>(null);
   const [audio] = useState(() => {
     const a = new Audio();
     a.preload = 'none'; // nothing downloads until the player turns music on
@@ -133,72 +191,133 @@ export function App() {
     return a;
   });
 
-  const persist = (s: Save) => { save(s); setStore(s); };
+  // Every save is a read-modify-write on the latest stored save, so two open tabs do not overwrite each other.
+  const persist = (change: (s: Save) => Save) => {
+    const s = update(change);
+    setStore(s);
+    return s;
+  };
 
   const refreshApi = () => {
     getStats(date).then(setGlobal, e => { console.error(e); setGlobal(null); });
     getLeaderboard(date).then(setBoard, e => { console.error(e); setBoard(null); });
   };
   useEffect(refreshApi, [date]);
+  useEffect(() => { if (init.post) postResult(init.post).then(refreshApi, console.error); }, []);
 
   const inBattle = live !== null && !live.done;
+
+  // Another tab saved: pick up its state unless a battle is running here.
+  useEffect(() => {
+    if (inBattle) return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== KEY) return;
+      const s = load();
+      setStore(s);
+      setNameInput(s.name);
+    };
+    addEventListener('storage', onStorage);
+    return () => removeEventListener('storage', onStorage);
+  }, [inBattle]);
+
   const musicOn = store.music === true;
   useEffect(() => {
-    if (musicOn && inBattle) audio.play().catch(e => console.error('music did not start', e));
-    else audio.pause();
+    if (!musicOn || !inBattle) { audio.pause(); return; }
+    // After a reload the browser blocks play() until the player interacts with the page, so retry on the first input.
+    const retry = () => { audio.play().catch(e => console.error('music did not start', e)); };
+    audio.play().catch(e => {
+      console.error('music blocked until the first click or key press', e);
+      addEventListener('click', retry, { once: true });
+      addEventListener('keydown', retry, { once: true });
+    });
+    return () => { removeEventListener('click', retry); removeEventListener('keydown', retry); };
   }, [musicOn, inBattle]);
+
+  const lines = useMemo(() => (live ? p1Lines(live.battle) : []), [live, live?.battle.log.length]);
+  const steps = useMemo(() => logSteps(lines), [lines]);
+  const shown = play?.shown ?? steps.length;
+  const view = useMemo(() => clientBattle(lines.slice(0, play ? steps[play.shown - 1].end : lines.length)), [lines, play]);
+
+  useEffect(() => {
+    if (!play) return;
+    const t = setTimeout(() => {
+      const n = advance(steps, play.shown);
+      setPlay(n === null ? null : { ...play, shown: n });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [play, steps]);
 
   const start = (official: boolean) => {
     // A page left open past midnight must not start yesterday's official battle.
     if (official && !isToday(date)) { location.reload(); return; }
-    if (official) persist({ ...store, current: { date, lead, choices: [] } });
+    if (official) {
+      // Another tab may have played or started today's battle since this one loaded.
+      const latest = load();
+      if (latest.history[date] !== undefined || latest.current?.date === date) { setStore(latest); return; }
+      const s = { ...latest, current: { date, lead, choices: [] } };
+      save(s);
+      setStore(s);
+    }
     const seed = official ? seedFor(date, 1) : PRNG.generateSeed();
     setSwitching(false);
     setCopied(false);
+    setPlay(null);
     setLive({ battle: createBattle(seed, team, lead), official });
   };
 
   const home = () => {
     if (!isToday(date)) { location.reload(); return; }
+    setStore(load());
+    setPlay(null);
     setLive(null);
   };
 
   const choose = (choice: string) => {
-    if (!live) return;
+    if (!live || play) return;
+    // Reload to resume from the other tab's save instead of mixing two move lists.
+    if (live.official && staleOfficial(store, load())) { location.reload(); return; }
+    const menu = menuOf(live.battle, switching);
+    const from = steps.length;
     submit(live.battle, choice);
     setSwitching(false);
     let s = store;
-    if (live.official) {
-      s = { ...s, current: { ...s.current!, choices: [...s.current!.choices, choice] } };
-      persist(s);
+    if (live.official) s = persist(s => ({ ...s, current: { ...s.current!, choices: [...s.current!.choices, choice] } }));
+    if (!reducedMotion()) {
+      const n = advance(logSteps(p1Lines(live.battle)), from);
+      setPlay(n === null ? null : { shown: n, menu });
     }
     if (live.battle.ended) {
       const done = summary(live.battle);
       if (live.official) {
-        const { date: d, lead: l, choices } = s.current!;
-        persist(finishOfficial(s, done.won, done));
-        postResult({
-          date: d, playerId: s.playerId, name: s.name, won: done.won, fainted: done.p1Fainted.filter(Boolean).length,
-          turns: done.turns, seed: seedFor(d, 1), lead: l, choices,
-        }).then(refreshApi, console.error);
+        const body = resultBody(s, done);
+        persist(s => finishOfficial(s, done));
+        postResult(body).then(refreshApi, console.error);
       }
       setLive({ ...live, done });
+    } else {
+      setLive({ ...live });
     }
-    setTick(t => t + 1);
   };
 
   const onName = (v: string) => {
     setNameInput(v);
-    const next = withName(store, v);
-    if (next !== store) persist(next);
+    if (withName(store, v) !== store) persist(s => withName(s, v));
   };
 
   const stats = computeStats(store.history, date);
   const playedToday = store.history[date] !== undefined;
+  const openElsewhere = !live && store.current?.date === date;
   const todayResult = store.results?.[date];
-  const groups = live ? groupLog(formatLog(live.battle)) : [];
+  const groups = live ? groupLog(steps.slice(0, shown).map(s => s.text)) : [];
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => setCopied(true), console.error);
   const nameOk = nameInput.trim() === '' || validName(nameInput);
+  const members = live ? party(view, live.battle, team) : [];
+  // Which side took damage in the step on screen, for the flash.
+  let hit: Hit | undefined;
+  if (play) {
+    const added = lines.slice(play.shown > 1 ? steps[play.shown - 2].end : 0, steps[play.shown - 1].end);
+    hit = { foe: added.some(l => l.startsWith('|-damage|p2a')), mine: added.some(l => l.startsWith('|-damage|p1a')), step: play.shown };
+  }
 
   return (
     <>
@@ -213,28 +332,45 @@ export function App() {
         {live && (
           <p class="battle-meta">
             <span class={`badge ${live.official ? 'official' : 'practice'}`}>{live.official ? 'Official battle' : 'Practice'}</span>
-            <span class="turn">Turn {live.battle.turn}</span>
+            <span class="turn">Turn {view.turn}</span>
           </p>
         )}
         <nav class="links">
           <a href="#how">How to play</a>
           <a href="#faq">FAQ</a>
         </nav>
-        <MusicToggle on={musicOn} onToggle={() => persist({ ...store, music: !musicOn })} />
+        <MusicToggle on={musicOn} onToggle={() => persist(s => ({ ...s, music: !musicOn }))} />
         <Countdown date={date} busy={inBattle && live!.official} />
       </header>
 
       <main>
-        <div class="row">
-          <section class="centre" aria-label="Battle">
+        {/* Party first in the source so keyboard users reach "Set as lead" before "Battle Cynthia"; on phones CSS puts the DS first. */}
+        <div class="top">
+          <div class="col-left">
+            {!live && !playedToday && (
+              <div class="intro">
+                <h2>Six Pokemon you didn't choose. One Champion who never changes.</h2>
+                <p>Everyone gets this same team today. Pick a lead, read her team, and take your one official shot before midnight.</p>
+              </div>
+            )}
             {live ? (
-              <BattleView live={live} team={team} switching={switching} onSwitching={setSwitching} onChoose={choose}
+              <>
+                <BattleParty members={members} canSwitch={!play && !live.done && p1Pending(live.battle) !== 'wait' && !(live.battle.p1.activeRequest as any)?.active?.[0]?.trapped} onChoose={choose} />
+                <BattleLog groups={groups} waiting={!play && !live.done && p1Pending(live.battle) === 'move' ? `What will ${onField(view.p1).species.name} do?` : null} />
+              </>
+            ) : <PartyPanel team={team} lead={lead} onLead={setLead} />}
+          </div>
+
+          <section class="col-right" aria-label="Battle">
+            {live ? (
+              <BattleView live={live} view={view} hit={hit} play={play} members={members} switching={switching}
+                onSwitching={setSwitching} onChoose={choose} onSkip={() => setPlay(null)}
                 share={live.done && live.official ? shareText(date, live.done, location.origin) : null}
                 copied={copied} onCopy={copy} onPractice={() => start(false)} onHome={home} groups={groups} />
             ) : (
               <>
                 <Ds
-                  foe={fromSet(CYNTHIA[0], false)} mine={fromSet(team[lead], true)}
+                  foe={fromSet(CYNTHIA[0])} mine={fromSet(team[lead])}
                   herFainted={CYNTHIA.map(() => false)}
                   msg={playedToday ? "Today's battle is done. Come back tomorrow." : 'Cynthia sent out Spiritomb! Pick your lead, then battle.'}
                   bottom={todayResult
@@ -244,27 +380,23 @@ export function App() {
                       : <MovePreview set={team[lead]} />}
                 />
                 <div class="actions">
-                  {!playedToday && <button type="button" class="primary" onClick={() => start(true)}>Battle Cynthia</button>}
+                  {!playedToday && !openElsewhere && <button type="button" class="primary" onClick={() => start(true)}>Battle Cynthia</button>}
                   <button type="button" class="secondary" onClick={() => start(false)}>Practice</button>
                 </div>
                 <p class="hint">
-                  {playedToday ? "Today's official battle is done. A new team unlocks at midnight." : 'Your official battle is still open today.'}
+                  {playedToday
+                    ? "Today's official battle is done. A new team unlocks at midnight."
+                    : openElsewhere
+                      ? 'Your official battle is open in another tab. Reload this page to continue it here.'
+                      : 'Your official battle is still open today.'}
                   {' '}Practice battles don't count and don't resume after reload.
                 </p>
               </>
             )}
           </section>
-
-          <div class="side right">
-            {live ? <BattleLog groups={groups} /> : <CynthiaPanel />}
-          </div>
-
-          <div class="side left">
-            {live
-              ? <BattleParty battle={live.battle} team={team} canSwitch={!live.done && p1Pending(live.battle) !== 'wait' && !(live.battle.p1.activeRequest as any)?.active?.[0]?.trapped} onChoose={choose} />
-              : <PartyPanel team={team} lead={lead} onLead={setLead} />}
-          </div>
         </div>
+
+        <CynthiaRow view={live ? view : null} />
 
         <div class="poketch-row">
           <section class="poketch" aria-label="Your record">
@@ -325,8 +457,7 @@ export function App() {
       </main>
 
       <footer>
-        <p>Daily Cynthia is an unofficial fan project and is not affiliated with, endorsed by, or connected to Nintendo, Game Freak, Creatures Inc. or The Pokemon Company. Pokemon names and sprites are trademarks of their respective owners. Battle engine: Pokemon Showdown (MIT). Sprites: PokeAPI.</p>
-        <p>Music: Pokémon Diamond/Pearl/Platinum (Game Freak), game rip by DMoore721, ViviVGM and kirbyhammer766 via KHInsider. Battle background: Pokémon Platinum, extracted from the pret/pokeplatinum decompilation.</p>
+        <p>Daily Cynthia is an unofficial fan project and is not affiliated with, endorsed by, or connected to Nintendo, Game Freak, Creatures Inc. or The Pokemon Company. Pokemon names and sprites are trademarks of their respective owners.</p>
       </footer>
     </>
   );
@@ -339,28 +470,46 @@ const FAQ: [string, string][] = [
   ['Does Cynthia play the same way every time?', 'Yes. She always picks the move with the best expected damage and switches out of bad matchups.'],
   ['What if I reload during the official battle?', 'The battle resumes where you left off. Practice battles do not resume.'],
   ['Do I need an account?', 'No. Your record stays in this browser, and clearing site data resets it. Pick a display name if you want to appear on the leaderboard.'],
+  ['Who made the music, sprites and battle engine?', 'Battle engine: Pokemon Showdown (MIT). Sprites: PokeAPI. Music: Pokémon Diamond/Pearl/Platinum (Game Freak), game rip by DMoore721, ViviVGM and kirbyhammer766 via KHInsider. Battle background: Pokémon Platinum, extracted from the pret/pokeplatinum decompilation.'],
 ];
 
 // What the DS shows for one side's active Pokemon.
-type Shown = { name: string; level: number; pct: number; hp?: string; status?: string; fainted?: boolean };
+type Shown = { name: string; level: number; hp: number; maxhp: number; status?: string; fainted?: boolean };
 
-function fromSet(set: PokemonSet, mine: boolean): Shown {
+function fromSet(set: PokemonSet): Shown {
   const max = toCalc(set).maxHP();
-  return { name: set.species, level: set.level, pct: 100, hp: mine ? `${max}/${max}` : '100%' };
+  return { name: set.species, level: set.level, hp: max, maxhp: max };
 }
 
-function fromLive(p: SimPokemon, mine: boolean): Shown {
-  const pct = p.hp / p.maxhp * 100;
+// The client empties the active slot on a faint; the fainted Pokemon stays on screen until the next switch-in.
+const onField = (side: ClientBattle['p1']) => side.active[0] ?? side.lastPokemon!;
+
+function fromView(p: ClientPokemon): Shown {
   return {
-    name: p.species.name, level: p.level, pct, status: STATUS[p.status] ? p.status : undefined, fainted: p.fainted,
-    hp: mine ? `${p.hp}/${p.maxhp}` : `${Math.round(pct)}%`,
+    name: p.species.name, level: p.level, hp: p.hp, maxhp: p.maxhp,
+    status: p.status && STATUS[p.status] ? p.status : undefined, fainted: p.fainted,
   };
 }
 
-function HpBar({ name, pct }: { name: string; pct: number }) {
+// The player's six in daily-team order: HP as the player has seen it so far, and the sim's switch slot
+// (side.pokemon is reordered by switches). A Pokemon not sent out yet is at full HP.
+type Member = { name: string; pct: number; fainted: boolean; active: boolean; slot: number };
+
+function party(view: ClientBattle, battle: Battle, team: PokemonSet[]): Member[] {
+  return team.map(set => {
+    const p = view.p1.team.find(q => q.name === set.name);
+    return {
+      name: set.species, pct: p ? p.hp / p.maxhp * 100 : 100, fainted: !!p?.fainted, active: !!p?.isActive(),
+      slot: battle.p1.pokemon.findIndex(q => q.set.species === set.species) + 1,
+    };
+  });
+}
+
+function HpBar({ name, pct, hidden }: { name: string; pct: number; hidden?: boolean }) {
   const n = Math.round(pct);
   return (
-    <span class="hpbar" role="meter" aria-label={`${name} HP`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={n} aria-valuetext={`${n}%`}>
+    <span class="hpbar" role="meter" aria-label={`${name} HP`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={n} aria-valuetext={`${n}%`}
+      aria-hidden={hidden || undefined}>
       <span style={`width:${pct}%;background:${hpColor(pct)}`} />
     </span>
   );
@@ -375,37 +524,67 @@ function Balls({ fainted, who }: { fainted: boolean[]; who: 'Cynthia' | 'You' })
   );
 }
 
+// Counts to a new HP value over the bar's 400 ms drain, so the number moves with the bar.
+function CountTo({ value }: { value: number }) {
+  const [n, setN] = useState(value);
+  useEffect(() => {
+    if (reducedMotion()) { setN(value); return; }
+    const from = n;
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (t: number) => {
+      const k = Math.min(1, (t - t0) / 400);
+      setN(Math.round(from + (value - from) * k));
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return <>{n}</>;
+}
+
 function HpBox({ s, foe, children }: { s: Shown; foe: boolean; children?: ComponentChildren }) {
+  const pct = s.hp / s.maxhp * 100;
   return (
     <div class={`hpbox ${foe ? 'foe' : 'mine'}`}>
       <p class="hpname">
         <span>{s.name}</span>
-        {s.status && <abbr title={STATUS[s.status]}>{s.status.toUpperCase()}</abbr>}
+        {s.status && <abbr class={`st-${s.status}`} title={STATUS[s.status]}>{s.status.toUpperCase()}</abbr>}
         <span class="lv">Lv{s.level}</span>
       </p>
-      <p class="hprow"><span class="hplabel" aria-hidden="true">HP</span><HpBar name={s.name} pct={s.pct} /></p>
-      <p class="hpnum">{s.hp}</p>
+      <p class="hprow"><span class="hplabel" aria-hidden="true">HP</span><HpBar name={s.name} pct={pct} /></p>
+      <p class="hpnum">{foe ? `${Math.round(pct)}%` : <><CountTo value={s.hp} />/{s.maxhp}</>}</p>
       {children}
     </div>
   );
 }
 
 // The DS: top screen with the scene and the latest message, hinge, bottom screen with whatever `bottom` is.
-function Ds({ foe, mine, herFainted, msg, bottom, bottomRef }: {
+// While a turn plays, `hit` flashes the side that took damage this step, and a click on the top screen skips.
+function Ds({ foe, mine, herFainted, msg, bottom, bottomRef, playing, hit, onSkip }: {
   foe: Shown; mine: Shown; herFainted: boolean[]; msg: string; bottom: ComponentChildren;
-  bottomRef?: { current: HTMLDivElement | null };
+  bottomRef?: { current: HTMLDivElement | null }; playing?: boolean; hit?: Hit;
+  onSkip?: () => void;
 }) {
+  const skipRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (playing && (document.activeElement === document.body || skipRef.current?.closest('.ds')?.contains(document.activeElement))) skipRef.current?.focus();
+  }, [playing]);
+  const cls = (side: 'foe' | 'mine', s: Shown) =>
+    `sprite ${side} ${s.fainted && !hit?.[side] ? 'gone' : ''} ${hit?.[side] ? 'hit' : ''}`;
   return (
-    <div class="ds">
+    <div class={`ds ${playing ? 'playing' : ''}`}>
       <div class="ds-half">
         <div class="bezel">
-          <div class="screen top">
+          <div class="screen top" onClick={playing ? onSkip : undefined}>
             <img class="bg" src="/bg/champion-room.png" alt="" />
-            <img class={`sprite foe ${foe.fainted ? 'gone' : ''}`} src={spritePath(foe.name, false)} alt={foe.name} />
-            <img class={`sprite mine ${mine.fainted ? 'gone' : ''}`} src={spritePath(mine.name, true)} alt={`${mine.name}, seen from behind`} />
-            <HpBox s={foe} foe><Balls fainted={herFainted} who="Cynthia" /></HpBox>
-            <HpBox s={mine} foe={false} />
+            {/* A new key restarts the flash when the same Pokemon is hit on consecutive steps. */}
+            <img key={`foe-${foe.name}-${hit?.foe ? hit.step : ''}`} class={cls('foe', foe)} src={spritePath(foe.name, false)} alt={foe.name} />
+            <img key={`mine-${mine.name}-${hit?.mine ? hit.step : ''}`} class={cls('mine', mine)} src={spritePath(mine.name, true)} alt={`${mine.name}, seen from behind`} />
+            <HpBox key={`foe-${foe.name}`} s={foe} foe><Balls fainted={herFainted} who="Cynthia" /></HpBox>
+            <HpBox key={`mine-${mine.name}`} s={mine} foe={false} />
             <p class="textbox">{msg}</p>
+            {playing && <button ref={skipRef} type="button" class="skip" onClick={e => { e.stopPropagation(); onSkip?.(); }}>Skip</button>}
           </div>
         </div>
       </div>
@@ -419,14 +598,16 @@ function Ds({ foe, mine, herFainted, msg, bottom, bottomRef }: {
   );
 }
 
-function MoveFace({ id, pp, label }: { id: string; pp?: string; label: string }) {
+function MoveFace({ id, pp, label }: { id: string; pp?: string; label?: string }) {
+  // The sim's "recharge" pseudo-move has no type, PP or damage.
+  if (id === 'recharge') return <span class="move-name">Recharging</span>;
   const move = dex.moves.get(id);
   return (
     <>
       <span class="move-name">{moveName(id)}</span>
       <span class="move-foot">
-        <span>{move.type}{pp && ` PP ${pp}`}</span>
-        <span class="dmg">{label}</span>
+        <span class="move-type">{move.type}{pp && ` ${pp}`}</span>
+        {label && <span class="dmg">{label}</span>}
       </span>
     </>
   );
@@ -437,13 +618,16 @@ function MovePreview({ set }: { set: PokemonSet }) {
   const me = toCalc(set);
   const her = toCalc(CYNTHIA[0]);
   return (
-    <ul class="moves" aria-label={`${set.species}'s moves against Spiritomb`}>
-      {set.moves.map(m => (
-        <li class="move" style={typeStyle(dex.moves.get(m).type)}>
-          <MoveFace id={m} label={dmgLabel(m, damagePct(me, her, m))} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <p class="screen-caption">Preview vs Spiritomb</p>
+      <ul class="moves preview" aria-label={`${set.species}'s moves against Spiritomb`}>
+        {set.moves.map(m => (
+          <li class="move" style={typeStyle(dex.moves.get(m).type)}>
+            <MoveFace id={m} label={dmgLabel(m, damagePct(me, her, m))} />
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -468,87 +652,78 @@ function Result({ s, share, copied, onCopy, autofocus }: {
 function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; onLead: (i: number) => void }) {
   const spiritomb = CYNTHIA[0];
   const her = toCalc(spiritomb);
+  const card = (set: PokemonSet, i: number) => {
+    const me = toCalc(set);
+    const sp = dex.species.get(set.species);
+    const hers = bestHit(her, me, spiritomb.moves);
+    const threat = `Spiritomb's best: ${moveName(hers.move)} ${dmgLabel(hers.move, hers.range)}`;
+    if (i !== lead) {
+      return (
+        <button type="button" class="tile bench" onClick={() => onLead(i)}>
+          <img src={spritePath(set.species, false)} alt="" width={56} height={56} />
+          <span class="tile-body">
+            <span class="tile-top">
+              <span class="mon">{set.species}</span>
+              <span class="dots">{sp.types.map(t => <span class="dot" style={typeStyle(t)} title={t} />)}</span>
+            </span>
+            <span class="threat">{threat}</span>
+          </span>
+          <span class="muted">Set as lead</span>
+        </button>
+      );
+    }
+    const mine = bestHit(me, her, set.moves);
+    return (
+      <div class="tile lead">
+        <div class="lead-top">
+          <img src={spritePath(set.species, false)} alt="" width={80} height={80} />
+          <div class="lead-name">
+            <h3>{set.species}</h3>
+            <p>{sp.types.join(' / ')}, {set.ability}</p>
+          </div>
+          <span class="pill-label">Leads</span>
+        </div>
+        <dl class="stats">
+          {Object.entries(me.stats).map(([k, v]) => <div><dt>{STAT[k]}</dt><dd>{v}</dd></div>)}
+        </dl>
+        <ul class="move-pills">{set.moves.map(m => <li style={typeStyle(dex.moves.get(m).type)}>{moveName(m)}</li>)}</ul>
+        <p class="best">Best on Spiritomb: {moveName(mine.move)} {dmgLabel(mine.move, mine.range)}<br /><span class="threat">{threat}</span></p>
+      </div>
+    );
+  };
   return (
     <section class="party" aria-labelledby="party-h">
       <div class="panel-head"><h2 id="party-h">Your party</h2><span>Tap one to lead</span></div>
-      {team.map((set, i) => {
-        const me = toCalc(set);
-        const sp = dex.species.get(set.species);
-        const hers = bestHit(her, me, spiritomb.moves);
-        const threat = <span class="threat">Spiritomb's best: {moveName(hers.move)} {dmgLabel(hers.move, hers.range)}</span>;
-        if (i !== lead) {
-          return (
-            <button type="button" class="tile bench" onClick={() => onLead(i)}>
-              <img src={spritePath(set.species, false)} alt="" width={48} height={48} />
-              <span class="tile-body">
-                <span class="tile-top">
-                  <span class="mon">{set.species}</span>
-                  <span class="dots">{sp.types.map(t => <span class="dot" style={typeStyle(t)} title={t} />)}</span>
-                  <span class="muted">Set as lead</span>
-                </span>
-                {threat}
-              </span>
-            </button>
-          );
-        }
-        const mine = bestHit(me, her, set.moves);
-        return (
-          <div class="tile lead">
-            <div class="lead-top">
-              <img src={spritePath(set.species, false)} alt="" width={64} height={64} />
-              <div class="lead-name">
-                <h3>{set.species}</h3>
-                <p>{sp.types.join(' / ')}, {set.ability}</p>
-              </div>
-              <span class="pill-label">Leads</span>
-            </div>
-            <dl class="stats">
-              {Object.entries(me.stats).map(([k, v]) => <div><dt>{STAT[k]}</dt><dd>{v}</dd></div>)}
-            </dl>
-            <ul class="move-pills">{set.moves.map(m => <li style={typeStyle(dex.moves.get(m).type)}>{moveName(m)}</li>)}</ul>
-            <p class="best">Best on Spiritomb: {moveName(mine.move)} {dmgLabel(mine.move, mine.range)}</p>
-            <p class="best">{threat}</p>
-          </div>
-        );
-      })}
+      {card(team[lead], lead)}
+      <div class="bench-list">{team.map((set, i) => i !== lead && card(set, i))}</div>
     </section>
   );
 }
 
 const STAT: Record<string, string> = { hp: 'HP', atk: 'Atk', def: 'Def', spa: 'SpA', spd: 'SpD', spe: 'Spe' };
 
-// The player's six in daily-team order, each with its current switch slot (side.pokemon is reordered by switches).
-function members(battle: Battle, team: PokemonSet[]): { p: SimPokemon; slot: number }[] {
-  const order = (p: SimPokemon) => team.findIndex(s => s.species === p.set.species);
-  return battle.p1.pokemon.map((p, i) => ({ p, slot: i + 1 })).sort((a, b) => order(a.p) - order(b.p));
-}
-
-function MemberButtons({ battle, team, canSwitch, onChoose }: {
-  battle: Battle; team: PokemonSet[]; canSwitch: boolean; onChoose: (c: string) => void;
-}) {
+function MemberButtons({ members, canSwitch, onChoose }: { members: Member[]; canSwitch: boolean; onChoose: (c: string) => void }) {
   return (
     <>
-      {members(battle, team).map(({ p, slot }) => {
-        const pct = p.hp / p.maxhp * 100;
-        return (
-          <button type="button" class={`tile member ${p.isActive ? 'active' : ''} ${p.fainted ? 'fainted' : ''}`}
-            disabled={!canSwitch || p.fainted || p.isActive} onClick={() => onChoose(`switch ${slot}`)}>
-            <img src={spritePath(p.species.name, false)} alt="" width={48} height={48} />
-            <span class="tile-body">
-              <span class="tile-top">
-                <span class="mon">{p.species.name}</span>
-                <span class="state">{p.fainted ? 'Fainted' : p.isActive ? 'In battle' : `${Math.round(pct)}%`}</span>
-              </span>
-              <HpBar name={p.species.name} pct={pct} />
+      {members.map(m => (
+        <button type="button" class={`tile member ${m.active ? 'active' : ''} ${m.fainted ? 'fainted' : ''}`}
+          disabled={!canSwitch || m.fainted || m.active} onClick={() => onChoose(`switch ${m.slot}`)}>
+          <img src={spritePath(m.name, false)} alt="" width={48} height={48} />
+          <span class="tile-body">
+            <span class="tile-top">
+              <span class="mon">{m.name}</span>
+              <span class="state">{m.fainted ? 'Fainted' : m.active ? 'In battle' : `${Math.round(m.pct)}%`}</span>
             </span>
-          </button>
-        );
-      })}
+            {/* The state text already says the HP; the bar is visual only so the button name does not repeat it. */}
+            <HpBar name={m.name} pct={m.pct} hidden />
+          </span>
+        </button>
+      ))}
     </>
   );
 }
 
-function BattleParty(props: { battle: Battle; team: PokemonSet[]; canSwitch: boolean; onChoose: (c: string) => void }) {
+function BattleParty(props: { members: Member[]; canSwitch: boolean; onChoose: (c: string) => void }) {
   return (
     <section class="party" aria-labelledby="party-h">
       <div class="panel-head"><h2 id="party-h">Your party</h2><span>{props.canSwitch ? 'Tap to switch' : ''}</span></div>
@@ -557,79 +732,106 @@ function BattleParty(props: { battle: Battle; team: PokemonSet[]; canSwitch: boo
   );
 }
 
-function CynthiaPanel() {
+// Her six in a full-width row. During a battle each card shows what the player has seen of that Pokemon.
+function CynthiaRow({ view }: { view: ClientBattle | null }) {
+  const cards = CYNTHIA.map(set => {
+    const p = view?.p2.team.find(q => q.name === set.name);
+    const pct = p ? Math.round(p.hp / p.maxhp * 100) : 100;
+    const state = !view ? null : !p ? 'Not seen yet' : p.fainted ? 'Fainted' : p.isActive() ? `In battle, ${pct}%` : `Switched out, ${pct}%`;
+    return { set, state, cls: p?.fainted ? 'fainted' : p?.isActive() ? 'active' : '' };
+  });
+  const left = cards.filter(c => c.cls !== 'fainted').length;
   return (
-    <aside class="cynthia" aria-labelledby="cynthia-h">
-      <div class="cynthia-head">
-        <span class="bar" aria-hidden="true" />
-        <div><p class="small">Pokemon League Champion</p><h2 id="cynthia-h">Cynthia</h2></div>
+    <section class="cynthia" aria-labelledby="cynthia-h">
+      <div class="cynthia-info">
+        <div class="cynthia-head">
+          <span class="bar" aria-hidden="true" />
+          <div><p class="small">{view ? `Cynthia has ${left} of 6 left` : 'Pokemon League Champion'}</p><h2 id="cynthia-h">Cynthia</h2></div>
+        </div>
+        {!view && <p class="cynthia-desc">Same team every day: her Platinum moves at level 100, each with a held item. She always opens with Spiritomb.</p>}
+        <details>
+          <summary>Show her moves</summary>
+          <dl>
+            {CYNTHIA.map(set => <div><dt>{set.species} ({set.ability}, {set.nature})</dt><dd>{set.moves.map(moveName).join(', ')}</dd></div>)}
+          </dl>
+        </details>
       </div>
-      <p class="intro">Same team every day: her Platinum moves at level 100, each with a held item. She always opens with Spiritomb.</p>
       <ul>
-        {CYNTHIA.map(set => (
-          <li>
-            <img src={spritePath(set.species, false)} alt="" width={44} height={44} />
+        {cards.map(({ set, state, cls }) => (
+          <li class={cls}>
+            <img src={spritePath(set.species, false)} alt="" width={64} height={64} />
             <span class="mon">{set.species}</span>
-            <span class="item">{set.item}</span>
+            <span class="item">{state ?? set.item}</span>
           </li>
         ))}
       </ul>
-      <details>
-        <summary>Show her moves</summary>
-        <dl>
-          {CYNTHIA.map(set => <div><dt>{set.species} ({set.ability}, {set.nature})</dt><dd>{set.moves.map(moveName).join(', ')}</dd></div>)}
-        </dl>
-      </details>
-    </aside>
+    </section>
   );
 }
 
 const cell = (max: number) => (max >= 100 ? 'OHKO' : `${Math.round(max)}%`);
 
+// The table opens in its own full-width panel below the three, so it does not stretch the other two.
 function Matchups({ team }: { team: PokemonSet[] }) {
+  const [open, setOpen] = useState(false);
   const cells = useMemo(() => team.map(set => CYNTHIA.map(c => {
     const [a, b] = [toCalc(set), toCalc(c)];
-    return `${cell(bestHit(a, b, set.moves).range[1])} / ${cell(bestHit(b, a, c.moves).range[1])}`;
+    return { you: bestHit(a, b, set.moves).range[1], her: bestHit(b, a, c.moves).range[1] };
   })), [team]);
   return (
-    <section class="poketch matchups" aria-label="Matchups">
-      <div class="lcd">
-        <h2>Matchups</h2>
-        <p>Your best hit on each of her Pokemon / her best hit on you, as max damage.</p>
-        <details>
-          <summary>Show matchups</summary>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th></th>{CYNTHIA.map(c => <th scope="col">{c.species}</th>)}</tr></thead>
-              <tbody>
-                {team.map((set, i) => (
-                  <tr>
-                    <th scope="row">{set.species}</th>
-                    {cells[i].map(c => <td>{c}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <>
+      <section class="poketch matchups" aria-label="Matchups">
+        <div class="lcd">
+          <h2>Matchups</h2>
+          <p>Your best hit on each of her Pokemon, and her best hit on you, as max damage.</p>
+          <button type="button" class="lcd-button" aria-expanded={open} aria-controls="matchups-table" onClick={() => setOpen(!open)}>
+            {open ? 'Hide matchups' : 'Show matchups'}
+          </button>
+        </div>
+      </section>
+      {open && (
+        <section id="matchups-table" class="poketch matchups-table" aria-label="Matchups table">
+          <div class="lcd">
+            <p class="mx-legend">In each box: <span class="you-key">your best hit on her</span> on the left, her best hit on you on the right. Max damage. <span class="ko">KO</span> means one hit knocks it out.</p>
+            <div class="table-wrap">
+              <table class="mx">
+                <thead><tr><th></th>{CYNTHIA.map(c => <th scope="col"><img src={spritePath(c.species, false)} alt="" />{c.species}</th>)}</tr></thead>
+                <tbody>
+                  {team.map((set, i) => (
+                    <tr>
+                      <th scope="row"><img src={spritePath(set.species, false)} alt="" />{set.species}</th>
+                      {cells[i].map((c, j) => (
+                        <td aria-label={`${set.species} hits ${CYNTHIA[j].species} for ${cell(c.you)}, ${CYNTHIA[j].species} hits ${set.species} for ${cell(c.her)}`}>
+                          <span class="you">{c.you >= 100 ? <span class="ko">KO</span> : cell(c.you)}</span>
+                          <span class="her">{c.her >= 100 ? <span class="ko">KO</span> : cell(c.her)}</span>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </details>
-      </div>
-    </section>
+        </section>
+      )}
+    </>
   );
 }
 
-function BattleLog({ groups }: { groups: LogGroup[] }) {
+function BattleLog({ groups, waiting }: { groups: LogGroup[]; waiting: string | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const count = groups.reduce((n, g) => n + g.lines.length + 1, 0);
-  useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight; }, [count]);
+  useEffect(() => { const el = ref.current; if (el) el.scrollTop = el.scrollHeight; }, [count, waiting]);
   return (
     <section class="poketch log" aria-label="Battle log">
       <div class="lcd">
         <div class="panel-head"><h2>Battle log</h2><span class="small">newest at the bottom</span></div>
         <div class="log-body" role="log" aria-live="polite" tabIndex={0} ref={ref}>
-          {groups.map(g => (
+          {groups.map((g, i) => (
             <div class="log-group">
               <h3>{g.turn}</h3>
               {g.lines.map(l => <p>{l}</p>)}
+              {waiting && i === groups.length - 1 && <p class="waiting">{waiting}</p>}
             </div>
           ))}
         </div>
@@ -639,30 +841,45 @@ function BattleLog({ groups }: { groups: LogGroup[] }) {
 }
 
 type BattleProps = {
-  live: Live; team: PokemonSet[]; switching: boolean; onSwitching: (b: boolean) => void; onChoose: (c: string) => void;
+  live: Live; view: ClientBattle; hit?: Hit; play: Playback | null; members: Member[];
+  switching: boolean; onSwitching: (b: boolean) => void; onChoose: (c: string) => void; onSkip: () => void;
   share: string | null; copied: boolean; onCopy: (t: string) => void; onPractice: () => void; onHome: () => void;
   groups: LogGroup[];
 };
 
-function BattleView({ live, team, switching, onSwitching, onChoose, share, copied, onCopy, onPractice, onHome, groups }: BattleProps) {
+function BattleView(props: BattleProps) {
+  const { live, view, hit, play, members, switching, onSwitching, onChoose, onSkip, share, copied, onCopy, onPractice, onHome, groups } = props;
   const { battle, done } = live;
-  const mine = battle.p1.active[0];
-  const foe = battle.p2.active[0];
-  const pending = p1Pending(battle);
-  const req = battle.p1.activeRequest as any;
-  const herBest = !done && !mine.fainted && !foe.fainted ? bestHit(fromSim(foe), fromSim(mine), liveMoves(foe)) : null;
+  const playing = play !== null;
+  const mine = fromView(onField(view.p1));
+  const foe = fromView(onField(view.p2));
+  const menu = play ? play.menu : menuOf(battle, switching);
   const latest = [...groups].reverse().find(g => g.lines.length)?.lines.at(-1) ?? '';
-  const msg = !done && pending === 'move' ? `What will ${mine.species.name} do?` : latest;
+  const msg = playing || done ? latest
+    : menu.kind === 'moves' ? `What will ${mine.name} do?`
+    : menu.kind === 'switch' && menu.forced ? (mine.fainted ? `${mine.name} fainted!` : 'Choose your next Pokemon')
+    : menu.kind === 'switch' ? `Switch ${mine.name} out for?`
+    : latest;
 
-  // The bottom screen's buttons are replaced after every choice; move focus to a stable target so it does not drop to <body>.
+  const sim = { mine: battle.p1.active[0], foe: battle.p2.active[0] };
+  const herBest = !done && !sim.mine.fainted && !sim.foe.fainted
+    ? bestHit(fromSim(sim.foe), fromSim(sim.mine), sim.foe.moveSlots.map(s => slotMoveId(sim.foe, s.id)))
+    : null;
+
+  // The bottom screen's buttons are replaced after every choice; once the turn has played, move focus to the
+  // same move as last time when it is still usable, else to the first usable button, so it does not drop to <body>.
   const bottom = useRef<HTMLDivElement>(null);
+  const lastMove = useRef<number | null>(null);
   useEffect(() => {
     const el = bottom.current;
-    (el?.querySelector<HTMLElement>('[data-autofocus]') ?? el?.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
-  }, [battle.log.length, switching, !!done]);
+    if (playing || !el) return;
+    const same = lastMove.current === null ? null : el.querySelectorAll<HTMLButtonElement>('button.move')[lastMove.current];
+    (el.querySelector<HTMLElement>('[data-autofocus]') ?? (same && !same.disabled ? same : null) ??
+      el.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
+  }, [battle.log.length, switching, !!done, playing]);
 
   let screen: ComponentChildren;
-  if (done) {
+  if (done && !playing) {
     screen = (
       <>
         <Result s={done} share={share} copied={copied} onCopy={onCopy} autofocus />
@@ -672,32 +889,33 @@ function BattleView({ live, team, switching, onSwitching, onChoose, share, copie
         </div>
       </>
     );
-  } else if (pending === 'switch' || switching) {
-    const forced = pending === 'switch';
+  } else if (menu.kind === 'switch') {
+    const { forced } = menu;
     screen = (
-      <>
-        <h2 class="screen-title" tabIndex={-1} data-autofocus={forced || undefined}>{forced ? 'Choose your next Pokemon' : 'Switch to'}</h2>
-        <div class="switches"><MemberButtons battle={battle} team={team} canSwitch onChoose={onChoose} /></div>
-        {!forced && <button type="button" class="pill" onClick={() => onSwitching(false)}>Back</button>}
-      </>
+      <div class="switch-menu" onKeyDown={e => { if (e.key === 'Escape' && !forced && !playing) onSwitching(false); }}>
+        <div class="screen-title-row">
+          <h2 class="screen-title" tabIndex={-1} data-autofocus={(forced && !playing) || undefined}>{forced ? 'Choose your next Pokemon' : 'Switch to'}</h2>
+          {!forced && <button type="button" class="pill" disabled={playing} onClick={() => onSwitching(false)}>Back</button>}
+        </div>
+        <div class="switches">
+          <MemberButtons members={members} canSwitch={!playing} onChoose={c => { lastMove.current = null; onChoose(c); }} />
+        </div>
+      </div>
     );
-  } else if (pending === 'move') {
+  } else if (menu.kind === 'moves') {
     screen = (
       <>
         <div class="moves">
-          {(req.active[0].moves as { id: string; pp: number; maxpp: number; disabled?: boolean }[]).map((m, i) => {
-            const id = slotMoveId(mine, m.id);
-            return (
-              <button type="button" class="move" style={typeStyle(dex.moves.get(id).type)} disabled={!!m.disabled}
-                onClick={() => onChoose(`move ${i + 1}`)}>
-                <MoveFace id={id} pp={m.maxpp !== undefined ? `${m.pp}/${m.maxpp}` : undefined} label={dmgLabel(id, damagePct(fromSim(mine), fromSim(foe), id))} />
-              </button>
-            );
-          })}
+          {menu.moves.map((m, i) => (
+            <button type="button" class="move" style={typeStyle(dex.moves.get(m.id).type)} disabled={playing || m.disabled}
+              onClick={() => { lastMove.current = i; onChoose(`move ${i + 1}`); }}>
+              <MoveFace id={m.id} pp={m.pp} label={m.label} />
+            </button>
+          ))}
         </div>
-        <button type="button" class="switch" disabled={!!req.active[0].trapped} onClick={() => onSwitching(true)}>
+        <button type="button" class="switch" disabled={playing || menu.trapped} onClick={() => onSwitching(true)}>
           <span>Switch</span>
-          <Balls fainted={summary(battle).p1Fainted} who="You" />
+          <Balls fainted={members.map(m => m.fainted)} who="You" />
         </button>
       </>
     );
@@ -707,15 +925,17 @@ function BattleView({ live, team, switching, onSwitching, onChoose, share, copie
 
   return (
     <>
-      <Ds foe={fromLive(foe, false)} mine={fromLive(mine, true)} herFainted={summary(battle).p2Fainted} msg={msg}
-        bottom={screen} bottomRef={bottom} />
+      <Ds foe={foe} mine={mine} herFainted={herFainted(view)} msg={msg} bottom={screen} bottomRef={bottom}
+        playing={playing} hit={hit} onSkip={onSkip} />
       {herBest && (
-        <p class="strip">
-          <img src={spritePath(foe.species.name, false)} alt="" width={40} height={40} />
-          <span class="strip-text">{foe.species.name}'s best hit on {mine.species.name}</span>
+        <p class={`strip ${playing ? 'hold' : ''}`}>
+          <img src={spritePath(sim.foe.species.name, false)} alt="" width={40} height={40} />
+          <span class="strip-text">{sim.foe.species.name}'s best hit on {sim.mine.species.name}</span>
           <span class="strip-dmg">{moveName(herBest.move)} {dmgLabel(herBest.move, herBest.range)}</span>
         </p>
       )}
     </>
   );
 }
+
+const herFainted = (view: ClientBattle) => CYNTHIA.map(set => !!view.p2.team.find(q => q.name === set.name)?.fainted);

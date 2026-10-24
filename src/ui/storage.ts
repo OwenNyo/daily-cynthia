@@ -18,7 +18,7 @@ export function load(store: Storage = localStorage): Save {
   if (raw) {
     try {
       const s = JSON.parse(raw);
-      if (isSave(s)) return s;
+      if (isSave(s)) return withValidResults(s);
     } catch {
       // Unparseable save: start fresh (spec "Storage").
     }
@@ -37,17 +37,35 @@ function isSave(v: unknown): v is Save {
   return c === undefined || (isObject(c) && typeof c.date === 'string' && Number.isInteger(c.lead) && Array.isArray(c.choices));
 }
 
+const isFaints = (v: unknown) => Array.isArray(v) && v.length === 6 && v.every(f => typeof f === 'boolean');
+const isSummary = (v: unknown): v is Summary =>
+  isObject(v) && typeof v.won === 'boolean' && Number.isInteger(v.turns) && isFaints(v.p1Fainted) && isFaints(v.p2Fainted);
+
+// Drops `results` entries the result screen could not show, and `results` itself when it is not an object.
+function withValidResults(s: Save): Save {
+  const { results, ...rest } = s;
+  if (!isObject(results)) return rest;
+  return { ...rest, results: Object.fromEntries(Object.entries(results).filter(([, r]) => isSummary(r))) };
+}
+
 export function save(s: Save, store: Storage = localStorage): void {
   store.setItem(KEY, JSON.stringify(s));
 }
 
+// Read-modify-write: another tab may have saved since this one loaded, so apply the change to the latest save.
+export function update(change: (s: Save) => Save, store: Storage = localStorage): Save {
+  const next = change(load(store));
+  save(next, store);
+  return next;
+}
+
 // `done` is absent when a resume fails and the attempt is recorded as a loss.
-export function finishOfficial(s: Save, won: boolean, done?: Summary): Save {
+export function finishOfficial(s: Save, done?: Summary): Save {
   const { current, ...rest } = s;
   const date = current!.date;
   return {
     ...rest,
-    history: { ...s.history, [date]: won ? 'W' : 'L' },
+    history: { ...s.history, [date]: (done?.won ?? false) ? 'W' : 'L' },
     ...(done && { results: { ...s.results, [date]: done } }),
   };
 }

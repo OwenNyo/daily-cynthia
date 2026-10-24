@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { finishOfficial, KEY, load, save, withName, type Save } from '../src/ui/storage';
+import { finishOfficial, KEY, load, save, update, withName, type Save } from '../src/ui/storage';
 import { memoryStorage } from './helpers';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,26 +47,26 @@ describe('storage', () => {
       history: {},
       current: { date: '2026-10-25', lead: 0, choices: ['move 1'] },
     };
-    const done = finishOfficial(s, true);
+    const done = finishOfficial(s, { won: true, turns: 1, p1Fainted: Array(6).fill(false), p2Fainted: Array(6).fill(true) });
     expect(done.history).toEqual({ '2026-10-25': 'W' });
     expect(done.current).toBeUndefined();
   });
 
-  it('finishOfficial records a loss as L', () => {
+  it('finishOfficial without a summary records a loss as L', () => {
     const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 0, choices: [] } };
-    expect(finishOfficial(s, false).history['2026-10-25']).toBe('L');
+    expect(finishOfficial(s).history['2026-10-25']).toBe('L');
   });
 
   it('finishOfficial does not mutate its input', () => {
     const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 0, choices: [] } };
-    finishOfficial(s, true);
+    finishOfficial(s);
     expect(s).toEqual({ playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 0, choices: [] } });
   });
 
   it('finishOfficial keeps the summary for the day', () => {
     const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 0, choices: [] } };
     const done = { won: true, turns: 12, p1Fainted: [true, false, false, false, false, false], p2Fainted: [true, true, true, true, true, true] };
-    const saved = finishOfficial(s, true, done);
+    const saved = finishOfficial(s, done);
     expect(saved.results).toEqual({ '2026-10-25': done });
     expect(saved.history).toEqual({ '2026-10-25': 'W' });
   });
@@ -74,7 +74,7 @@ describe('storage', () => {
   it('finishOfficial keeps earlier summaries', () => {
     const old = { won: false, turns: 3, p1Fainted: Array(6).fill(true), p2Fainted: Array(6).fill(false) };
     const s: Save = { playerId: 'x', name: '', history: { '2026-10-24': 'L' }, results: { '2026-10-24': old }, current: { date: '2026-10-25', lead: 0, choices: [] } };
-    expect(finishOfficial(s, false).results).toEqual({ '2026-10-24': old });
+    expect(finishOfficial(s).results).toEqual({ '2026-10-24': old });
   });
 
   it.each(['null', '42', '"text"', '[]', '{}', '{"playerId":"x","name":"","history":null}'])('wrong shape %s gives a fresh save', raw => {
@@ -96,5 +96,39 @@ describe('storage', () => {
   it('withName keeps the old name on invalid input', () => {
     const s: Save = { playerId: 'x', name: 'Ash', history: {} };
     expect(withName(s, 'a!')).toBe(s);
+  });
+
+  it('update applies the change to the latest stored save, not a stale copy', () => {
+    const store = memoryStorage();
+    const stale = load(store);
+    save({ ...stale, history: { '2026-10-24': 'W' } }, store); // another tab
+    const next = update(s => ({ ...s, music: true }), store);
+    expect(next).toMatchObject({ music: true, history: { '2026-10-24': 'W' } });
+    expect(load(store)).toEqual(next);
+  });
+
+  it('update starts from a fresh save when nothing is stored', () => {
+    const store = memoryStorage();
+    const next = update(s => ({ ...s, name: 'Ash' }), store);
+    expect(next.playerId).toMatch(UUID);
+    expect(load(store).name).toBe('Ash');
+  });
+
+  it('malformed results entries are dropped, good ones kept', () => {
+    const store = memoryStorage();
+    const good = { won: true, turns: 9, p1Fainted: Array(6).fill(false), p2Fainted: Array(6).fill(true) };
+    store.setItem(KEY, JSON.stringify({
+      playerId: 'x', name: '', history: {},
+      results: { '2026-10-24': good, '2026-10-23': { won: 'yes' }, '2026-10-22': null, '2026-10-21': { ...good, p1Fainted: [true] } },
+    }));
+    expect(load(store).results).toEqual({ '2026-10-24': good });
+  });
+
+  it.each(['[]', 'null', '"x"'])('results of the wrong type (%s) are dropped', raw => {
+    const store = memoryStorage();
+    store.setItem(KEY, `{"playerId":"x","name":"","history":{},"results":${raw}}`);
+    const s = load(store);
+    expect(s.results).toBeUndefined();
+    expect(s.playerId).toBe('x');
   });
 });
