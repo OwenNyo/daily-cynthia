@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": [
+      "ES2022"
+    ],
+    "types": []
+  },
+  "include": [
+    ".",
+    "../src/game/name.ts",
+    "../src/game/daily.ts",
+    "../worker-configuration.d.ts",
+    "../tests/worker.test.ts"
+  ]
+}
