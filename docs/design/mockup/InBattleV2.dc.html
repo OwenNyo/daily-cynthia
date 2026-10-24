@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Cynthia battle, new layout</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&amp;family=DotGothic16&amp;family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:inherit}a:hover{opacity:.8}
+img.px{image-rendering:pixelated}
+button:focus-visible,a:focus-visible{outline:3px solid #E2B84B;outline-offset:2px}
+</style>
+</helmet>
+<div style="background: {{t.bg}}; color: {{t.ink}}; font-family: 'M PLUS Rounded 1c', system-ui, sans-serif; min-height: 100vh;">
+<div style="max-width: 1240px; margin: 0 auto; padding: 0 20px;">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 18px 0 8px;">
+<a href="#" style="font-family: 'Dela Gothic One', sans-serif; font-size: 24px; text-decoration: none;">Daily Cynthia</a>
+<span style="font-size: 13px; font-weight: 800; padding: 5px 12px; border-radius: 999px; background: #E2B84B; color: #1D1B2B;">Official battle</span>
+<div style="flex: 1 1 auto;"></div>
+<span style="font-family: DotGothic16, monospace; font-size: 16px; color: {{t.ink2}};">No. 1</span>
+<span style="font-family: DotGothic16, monospace; font-size: 16px;">Turn 4</span>
+</header>
+
+<section style="display: flex; flex-wrap: wrap; gap: 24px; align-items: stretch; padding: 20px 0 24px;">
+
+<div style="flex: 1 1 360px; min-width: 0; order: 1; display: flex; flex-direction: column; gap: 8px;">
+<div style="display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 4px;"><h2 style="margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 20px; font-weight: 400;">Your party</h2><span style="font-size: 13px; color: {{t.muted}};">Tap to switch</span></div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<sc-for list="{{party}}" as="p" hint-placeholder-count="6">
+<button type="button" disabled="{{p.off}}" style="font: inherit; color: {{t.ink}}; text-align: left; cursor: pointer; background: {{p.bg}}; border: {{p.border}}; border-radius: 22px 6px 22px 6px; padding: 6px 14px 8px 8px; display: flex; align-items: center; gap: 10px; min-height: 60px; opacity: {{p.op}};">
+<img class="px" src="{{p.img}}" alt="" width="48" height="48" style="filter: {{p.filter}};">
+<span style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 5px;">
+<span style="display: flex; justify-content: space-between; font-weight: 700; font-size: 15px;"><span>{{p.n}}</span><span style="font-family: DotGothic16, monospace; font-weight: 400; font-size: 13px; color: {{t.ink2}};">{{p.status}}</span></span>
+<span style="height: 6px; border-radius: 3px; background: {{t.track}}; display: block;"><span style="display: block; height: 100%; width: {{p.w}}; border-radius: 3px; background: #48C058;"></span></span>
+</span>
+</button>
+</sc-for>
+</div>
+
+<div style="flex: 1 1 auto; margin-top: 12px; background: #4E5868; border-radius: 26px; padding: 10px; box-shadow: inset 0 -4px 0 #39414E; display: flex;">
+<div style="flex: 1 1 auto; background: #A6C48A; color: #233320; border-radius: 18px; padding: 14px 16px; font-family: DotGothic16, monospace; display: flex; flex-direction: column; gap: 10px;">
+<div style="display: flex; justify-content: space-between; align-items: baseline;"><h2 style="margin: 0; font-size: 16px; font-weight: 400;">Battle log</h2><span style="font-size: 12px;">newest at the bottom</span></div>
+<div style="height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px;">
+<sc-for list="{{log}}" as="g" hint-placeholder-count="5">
+<div style="display: flex; flex-direction: column; gap: 4px;">
+<div style="font-size: 12px; border-bottom: 2px dotted #5C7A4A; padding-bottom: 2px;">{{g.h}}</div>
+<sc-for list="{{g.lines}}" as="l" hint-placeholder-count="3"><div style="font-size: 14px; line-height: 1.45;">{{l.x}}</div></sc-for>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+
+<div style="flex: 0 0 480px; max-width: 100%; order: 2; display: flex; flex-direction: column; align-items: center; gap: 14px;">
+<dc-import name="Battle" state="{{ds}}" hint-size="480px,760px"></dc-import>
+<div style="width: 100%; max-width: 432px; background: {{t.panel}}; border: 1px solid {{t.line}}; border-radius: 14px; padding: 10px 14px; display: flex; align-items: center; gap: 10px; font-size: 14px;">
+<img class="px" src="/_blob/71394d04aabbbf1a84024fcbce12b866" alt="" width="40" height="40">
+<span style="flex: 1 1 auto;">Lucario's best hit on Flareon</span>
+<span style="font-family: DotGothic16, monospace; font-size: 15px;">Earthquake 62-73%</span>
+</div>
+</div>
+</section>
+
+<section aria-labelledby="her-team" style="background: #1D1B2B; color: #EEEDF5; border-radius: 6px 28px 6px 28px; padding: 20px; display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; margin-bottom: 48px;">
+<div style="flex: 1 1 220px; display: flex; align-items: center; gap: 12px;">
+<div style="width: 6px; align-self: stretch; background: #E2B84B; border-radius: 3px;"></div>
+<div><div style="font-size: 12px; color: #BDB9D0;">Cynthia has 5 of 6 left</div><h2 id="her-team" style="margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 26px; font-weight: 400;">Cynthia</h2></div>
+</div>
+<ul style="flex: 4 1 640px; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;">
+<sc-for list="{{cynthia}}" as="c" hint-placeholder-count="6">
+<li style="display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 8px 12px; border-radius: 14px; background: #2A2740; border: {{c.border}}; opacity: {{c.op}}; text-align: center;">
+<img class="px" src="{{c.img}}" alt="" width="64" height="64" style="filter: {{c.filter}};">
+<span style="font-weight: 700; font-size: 14px;">{{c.n}}</span>
+<span style="font-family: DotGothic16, monospace; font-size: 12px; color: #E2B84B;">{{c.status}}</span>
+</li>
+</sc-for>
+</ul>
+</section>
+
+<footer style="border-top: 1px solid {{t.line}}; padding: 20px 0 36px; font-size: 12px; line-height: 1.6; color: {{t.muted}};">
+<p style="margin: 0; max-width: 80ch;">Daily Cynthia is an unofficial fan project and is not affiliated with, endorsed by, or connected to Nintendo, Game Freak, Creatures Inc. or The Pokemon Company. Pokemon names and sprites are trademarks of their respective owners. Battle engine: Pokemon Showdown (MIT). Sprites: PokeAPI.</p>
+</footer>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":1300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark
+      ? { bg: '#17161F', panel: '#23222E', ink: '#EEEDF5', ink2: '#C6C4D4', muted: '#A3A1B5', line: '#3D3B52', track: '#3D3B52' }
+      : { bg: '#E4E2EC', panel: '#F7F6FB', ink: '#1D1B2B', ink2: '#3E3B52', muted: '#545069', line: '#BCB8CE', track: '#CFCBDD' };
+    const up = { c: '#FAFAF7' };
+    const down = { c: '#5A5870' };
+    const ok = (n, img, hp) => ({ n, img, status: hp, w: '100%', off: false, op: 1, filter: 'none', bg: t.panel, border: '1px solid ' + t.line });
+    const party = [
+      { n: 'Weavile', img: '/_blob/105e9941f4afb273532a2fb0a07feffa', status: 'Fainted', w: '0%', off: true, op: 0.55, filter: 'grayscale(1)', bg: t.panel, border: '1px solid ' + t.line },
+      { n: 'Flareon', img: '/_blob/987d6b0511770c7da6634b8386bfa9e2', status: 'In battle', w: '100%', off: true, op: 1, filter: 'none', bg: dark ? '#2E2B22' : '#FBF3DC', border: '3px solid #E2B84B' },
+      ok('Ludicolo', '/_blob/d4f08a4e05d4a014e78bc852786c0572', '100%'),
+      ok('Victreebel', '/_blob/516da89f290c808d5079cb283e0d649d', '100%'),
+      ok('Ninjask', '/_blob/1efe784e8ef01285eb000bcb98abd9c9', '100%'),
+      ok('Minun', '/_blob/38ca7dd222b801b05fbae9374f8156b1', '100%')
+    ];
+    const her = (n, img, status) => ({ n, img, status, op: 1, filter: 'none', border: '2px solid transparent' });
+    const cynthia = [
+      { n: 'Spiritomb', img: '/_blob/1dd060717cee2af7d07ff9d9fa20e61a', status: 'Fainted', op: 0.5, filter: 'grayscale(1)', border: '2px solid transparent' },
+      { n: 'Lucario', img: '/_blob/71394d04aabbbf1a84024fcbce12b866', status: 'In battle, 74%', op: 1, filter: 'none', border: '2px solid #E2B84B' },
+      her('Roserade', '/_blob/72e6a30d38abc746d79daba8980e2a8f', 'Not seen yet'),
+      her('Togekiss', '/_blob/ebed17d2d39059be08b84994618584a8', 'Not seen yet'),
+      her('Milotic', '/_blob/72c8d79f1260f3d5ab61766cc61a7917', 'Not seen yet'),
+      her('Garchomp', '/_blob/093a9e86e7cd003c980b080e4617f7dc', 'Not seen yet')
+    ];
+    const ds = {
+      foeImg: '/_blob/71394d04aabbbf1a84024fcbce12b866', foeName: 'Lucario', foeW: '74%', foeBar: '#48C058',
+      myImg: '/_blob/07c3359d7387cfa8d9c3283a58e0dabe', myName: 'Flareon', myW: '100%', myBar: '#48C058', myHp: '292/ 292',
+      msg: 'What will Flareon do?',
+      herBalls: [down, up, up, up, up, up],
+      myBalls: [down, up, up, up, up, up],
+      moves: [
+        { n: 'Fire Blast', type: 'Fire', pp: '8/8', dmg: '82-97%', bg: '#F08030', edge: '#A8561F', fg: '#1C2030' },
+        { n: 'Superpower', type: 'Fighting', pp: '8/8', dmg: '58-68%', bg: '#C03028', edge: '#7E1F1A', fg: '#FFFFFF' },
+        { n: 'Quick Attack', type: 'Normal', pp: '48/48', dmg: '8-10%', bg: '#A8A878', edge: '#6D6D4E', fg: '#1C2030' },
+        { n: 'Will-O-Wisp', type: 'Fire', pp: '24/24', dmg: 'Burn', bg: '#F08030', edge: '#A8561F', fg: '#1C2030' }
+      ]
+    };
+    const L = (...xs) => xs.map((x) => ({ x }));
+    const log = [
+      { h: 'Start', lines: L('Cynthia sent out Spiritomb!', 'Go! Weavile!') },
+      { h: 'Turn 1', lines: L('Weavile used Night Slash!', 'A critical hit!', 'The opposing Spiritomb lost 52% of its health!', 'The opposing Spiritomb used Silver Wind!', 'It’s super effective!', 'Weavile lost 61% of its health!', 'The opposing Spiritomb restored a little HP using its Leftovers!') },
+      { h: 'Turn 2', lines: L('Weavile used Night Slash!', 'The opposing Spiritomb fainted!', 'Cynthia sent out Lucario!') },
+      { h: 'Turn 3', lines: L('Weavile used Ice Punch!', 'It’s not very effective...', 'The opposing Lucario lost 16% of its health!', 'The opposing Lucario used Aura Sphere!', 'It’s super effective!', 'Weavile fainted!', 'The opposing Lucario lost some of its HP!', 'Go! Flareon!') },
+      { h: 'Turn 4', lines: L('What will Flareon do?') }
+    ];
+    return { t, party, cynthia, ds, log };
+  }
+}
+</script>
+</body>
+</html>

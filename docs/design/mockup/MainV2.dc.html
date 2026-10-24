@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Daily Cynthia home, new layout</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&amp;family=DotGothic16&amp;family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:inherit}a:hover{opacity:.8}
+img.px{image-rendering:pixelated}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #E2B84B;outline-offset:2px}
+</style>
+</helmet>
+<div style="background: {{t.bg}}; color: {{t.ink}}; font-family: 'M PLUS Rounded 1c', system-ui, sans-serif; min-height: 100vh;">
+<div style="max-width: 1240px; margin: 0 auto; padding: 0 20px;">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px 0 8px;">
+<div style="flex: 1 1 300px;">
+<div style="font-family: 'Dela Gothic One', sans-serif; font-size: 34px; line-height: 1;">Daily Cynthia</div>
+<div style="font-size: 14px; color: {{t.ink2}}; margin-top: 6px;">Today's six against the Sinnoh Champion. One official battle a day.</div>
+</div>
+<nav style="display: flex; gap: 8px; font-size: 14px; font-weight: 700;">
+<a href="#how" style="text-decoration: none; padding: 10px 14px; border-radius: 999px; border: 1px solid {{t.line}};">How to play</a>
+<a href="#faq" style="text-decoration: none; padding: 10px 14px; border-radius: 999px; border: 1px solid {{t.line}};">FAQ</a>
+</nav>
+<div style="background: #4E5868; border-radius: 22px; padding: 8px; box-shadow: inset 0 -3px 0 #39414E;">
+<div style="background: #A6C48A; color: #233320; border-radius: 14px; padding: 8px 16px; font-family: DotGothic16, monospace; display: flex; gap: 18px; align-items: baseline;">
+<span style="font-size: 14px;">No. 1</span>
+<span style="font-size: 30px; letter-spacing: 1px;">21:14:30</span>
+<span style="font-size: 13px;">to next team</span>
+</div>
+</div>
+</header>
+
+<section style="display: flex; flex-wrap: wrap; gap: 24px; align-items: stretch; padding: 24px 0 24px;">
+
+<div id="team" style="flex: 1 1 360px; min-width: 0; order: 1; display: flex; flex-direction: column; gap: 8px;">
+<div style="padding: 0 4px 22px; display: flex; flex-direction: column; gap: 12px;">
+<h2 style="margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 30px; font-weight: 400; line-height: 1.15;">Six Pokemon you didn't choose. One Champion who never changes.</h2>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: {{t.ink2}}; max-width: 60ch;">Everyone gets this same team today. Pick a lead, read her team, and take your one official shot before midnight.</p>
+</div>
+<div style="display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 4px;"><h2 style="margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 20px; font-weight: 400;">Your party</h2><span style="font-size: 13px; color: {{t.muted}};">Tap one to lead</span></div>
+<div style="background: {{t.lead}}; border: 3px solid #E2B84B; border-radius: 22px 6px 22px 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px;">
+<div style="display: flex; align-items: center; gap: 12px;">
+<img class="px" src="/_blob/105e9941f4afb273532a2fb0a07feffa" alt="" width="80" height="80">
+<div style="flex: 1 1 auto;"><div style="font-weight: 800; font-size: 20px;">Weavile</div><div style="font-size: 13px; color: {{t.ink2}};">Dark / Ice, Pressure</div></div>
+<span style="font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 999px; background: #E2B84B; color: #1D1B2B;">Leads</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; font-family: DotGothic16, monospace; text-align: center;">
+<sc-for list="{{stats}}" as="s" hint-placeholder-count="6"><div><div style="font-size: 11px; color: {{t.muted}};">{{s.k}}</div><div style="font-size: 16px;">{{s.v}}</div></div></sc-for>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px;">
+<sc-for list="{{moves}}" as="m" hint-placeholder-count="4"><span style="font-size: 12px; font-weight: 700; padding: 4px 9px; border-radius: 999px; background: {{m.bg}}; color: {{m.fg}};">{{m.n}}</span></sc-for>
+</div>
+<div style="font-size: 13px; line-height: 1.6;">Best on Spiritomb: Night Slash 32-38%<br><span style="color: {{t.ink2}};">Spiritomb's best: Silver Wind 40-47%</span></div>
+</div>
+<div style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px;">
+<sc-for list="{{bench}}" as="p" hint-placeholder-count="5">
+<button type="button" style="flex: 1 1 0; font: inherit; color: {{t.ink}}; text-align: left; cursor: pointer; background: {{t.panel}}; border: 1px solid {{t.line}}; border-radius: 22px 6px 22px 6px; padding: 8px 16px 8px 10px; display: flex; align-items: center; gap: 12px; min-height: 64px;">
+<img class="px" src="{{p.img}}" alt="" width="56" height="56">
+<span style="flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px;">
+<span style="display: flex; align-items: center; gap: 8px;"><span style="font-weight: 700; font-size: 15px;">{{p.n}}</span><span style="display: flex; gap: 4px;"><sc-for list="{{p.types}}" as="ty" hint-placeholder-count="2"><span style="width: 12px; height: 12px; border-radius: 50%; background: {{ty.bg}}; border: 1px solid {{t.line}};" title="{{ty.n}}"></span></sc-for></span></span>
+<span style="font-size: 12px; color: {{t.muted}};">Spiritomb's best: {{p.her}}</span>
+</span>
+<span style="font-size: 12px; color: {{t.muted}};">Set as lead</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<div style="flex: 0 0 480px; max-width: 100%; order: 2; display: flex; flex-direction: column; align-items: center; gap: 16px;">
+<dc-import name="Battle" hint-size="480px,760px"></dc-import>
+<div style="display: flex; gap: 12px; width: 100%; max-width: 432px;">
+<button type="button" style="flex: 2 1 auto; font: inherit; font-family: 'Dela Gothic One', sans-serif; font-size: 18px; min-height: 56px; border-radius: 999px; border: 0; background: #E2B84B; color: #1D1B2B; box-shadow: inset 0 -5px 0 #B28A2C; cursor: pointer;">Battle Cynthia</button>
+<button type="button" style="flex: 1 1 auto; font: inherit; font-weight: 800; font-size: 15px; min-height: 56px; border-radius: 999px; border: 2px solid {{t.ink}}; background: transparent; color: {{t.ink}}; cursor: pointer;">Practice</button>
+</div>
+<div style="font-size: 13px; color: {{t.muted}}; text-align: center;">Your official battle is still open today. Practice battles don't count and don't resume after reload.</div>
+</div>
+</section>
+
+<section aria-labelledby="her-team" style="background: #1D1B2B; color: #EEEDF5; border-radius: 6px 28px 6px 28px; padding: 20px; display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; margin-bottom: 40px;">
+<div style="flex: 1 1 220px; display: flex; flex-direction: column; gap: 10px;">
+<div style="display: flex; align-items: center; gap: 12px;">
+<div style="width: 6px; align-self: stretch; background: #E2B84B; border-radius: 3px;"></div>
+<div><div style="font-size: 12px; color: #BDB9D0;">Pokemon League Champion</div><h2 id="her-team" style="margin: 0; font-family: 'Dela Gothic One', sans-serif; font-size: 26px; font-weight: 400;">Cynthia</h2></div>
+</div>
+<p style="margin: 0; font-size: 13px; line-height: 1.6; color: #CFCBE0;">Same team every day: her Platinum moves at level 100, each with a held item. She always opens with Spiritomb.</p>
+<a href="#" style="font-size: 13px; font-weight: 700; color: #E2B84B;">Show her moves</a>
+</div>
+<ul style="flex: 4 1 640px; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;">
+<sc-for list="{{cynthia}}" as="c" hint-placeholder-count="6">
+<li style="display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 8px 12px; border-radius: 14px; background: #2A2740; text-align: center;">
+<img class="px" src="{{c.img}}" alt="" width="64" height="64">
+<span style="font-weight: 700; font-size: 14px;">{{c.n}}</span>
+<span style="font-family: DotGothic16, monospace; font-size: 12px; color: #E2B84B;">{{c.item}}</span>
+</li>
+</sc-for>
+</ul>
+</section>
+
+<section style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: stretch; gap: 20px; padding-bottom: 20px;">
+<div style="background: #4E5868; border-radius: 26px; padding: 10px; box-shadow: inset 0 -4px 0 #39414E;">
+<div style="background: #A6C48A; color: #233320; border-radius: 18px; padding: 16px 18px; height: 100%; box-sizing: border-box; font-family: DotGothic16, monospace; display: flex; flex-direction: column; gap: 10px;">
+<div style="font-size: 14px;">Your record</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px;">
+<sc-for list="{{record}}" as="r" hint-placeholder-count="4"><div><div style="font-size: 32px; line-height: 1;">{{r.v}}</div><div style="font-size: 12px;">{{r.k}}</div></div></sc-for>
+</div>
+</div>
+</div>
+<div style="background: #4E5868; border-radius: 26px; padding: 10px; box-shadow: inset 0 -4px 0 #39414E;">
+<div style="background: #A6C48A; color: #233320; border-radius: 18px; padding: 16px 18px; height: 100%; box-sizing: border-box; font-family: DotGothic16, monospace; display: flex; flex-direction: column; gap: 10px;">
+<div style="font-size: 14px;">Today, all players</div>
+<div><div style="font-size: 32px; line-height: 1;">34%</div><div style="font-size: 12px;">of 212 players beat Cynthia</div></div>
+<div style="font-size: 13px;">Leaderboard</div>
+<ol style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6;"><li>Ash: 0 fainted, 14 turns</li><li>Dawn: 1 fainted, 12 turns</li><li>Lucas: 1 fainted, 19 turns</li><li>Barry: 2 fainted, 16 turns</li><li>Cheryl: 3 fainted, 22 turns</li></ol>
+</div>
+</div>
+<div style="background: #4E5868; border-radius: 26px; padding: 10px; box-shadow: inset 0 -4px 0 #39414E;">
+<div style="background: #A6C48A; color: #233320; border-radius: 18px; padding: 16px 18px; height: 100%; box-sizing: border-box; font-family: DotGothic16, monospace; display: flex; flex-direction: column; gap: 10px;">
+<div style="font-size: 14px;">Matchups</div>
+<div style="font-size: 13px; line-height: 1.6;">Who hits each of her Pokemon hardest, and how hard she hits back.</div>
+<button type="button" style="font: inherit; align-self: flex-start; margin-top: auto; min-height: 44px; padding: 0 16px; border-radius: 999px; border: 2px solid #233320; background: transparent; color: #233320; cursor: pointer;">Show matchups</button>
+</div>
+</div>
+</section>
+<div style="height: 36px;"></div>
+
+<section id="how" style="padding-bottom: 56px;">
+<h2 style="margin: 0 0 18px; font-family: 'Dela Gothic One', sans-serif; font-size: 26px; font-weight: 400;">How to play</h2>
+<ol style="margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
+<li style="background: {{t.panel}}; border-radius: 22px 6px 22px 6px; padding: 18px; display: flex; gap: 14px;"><span style="font-family: 'Dela Gothic One', sans-serif; font-size: 34px; line-height: 1; color: {{t.muted}};">1</span><div><h3 style="margin: 0 0 6px; font-size: 16px;">Get today's team</h3><p style="margin: 0; font-size: 14px; line-height: 1.6; color: {{t.ink2}};">At midnight in your time zone a new six unlocks. Everyone gets the same six.</p></div></li>
+<li style="background: {{t.panel}}; border-radius: 22px 6px 22px 6px; padding: 18px; display: flex; gap: 14px;"><span style="font-family: 'Dela Gothic One', sans-serif; font-size: 34px; line-height: 1; color: {{t.muted}};">2</span><div><h3 style="margin: 0 0 6px; font-size: 16px;">Battle on the touch screen</h3><p style="margin: 0; font-size: 14px; line-height: 1.6; color: {{t.ink2}};">Tap a move or switch each turn. Leave mid-battle and it waits for you.</p></div></li>
+<li style="background: {{t.panel}}; border-radius: 22px 6px 22px 6px; padding: 18px; display: flex; gap: 14px;"><span style="font-family: 'Dela Gothic One', sans-serif; font-size: 34px; line-height: 1; color: {{t.muted}};">3</span><div><h3 style="margin: 0 0 6px; font-size: 16px;">Share your result</h3><p style="margin: 0; font-size: 14px; line-height: 1.6; color: {{t.ink2}};">Copy your grid. Winners go on today's leaderboard.</p></div></li>
+</ol>
+</section>
+
+<footer style="border-top: 1px solid {{t.line}}; padding: 20px 0 36px; font-size: 12px; line-height: 1.6; color: {{t.muted}};">
+<p style="margin: 0; max-width: 80ch;">Daily Cynthia is an unofficial fan project and is not affiliated with, endorsed by, or connected to Nintendo, Game Freak, Creatures Inc. or The Pokemon Company. Pokemon names and sprites are trademarks of their respective owners. Battle engine: Pokemon Showdown (MIT). Sprites: PokeAPI.</p>
+</footer>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":1900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark
+      ? { bg: '#17161F', panel: '#23222E', lead: '#2E2B22', ink: '#EEEDF5', ink2: '#C6C4D4', muted: '#A3A1B5', line: '#3D3B52' }
+      : { bg: '#E4E2EC', panel: '#F7F6FB', lead: '#FBF3DC', ink: '#1D1B2B', ink2: '#3E3B52', muted: '#545069', line: '#BCB8CE' };
+    const T = {
+      Dark: ['#705848', '#FFFFFF'], Ice: ['#98D8D8', '#1D1B2B'], Fighting: ['#C03028', '#FFFFFF'], Ghost: ['#705898', '#FFFFFF'],
+      Poison: ['#A040A0', '#FFFFFF'], Grass: ['#78C850', '#1D1B2B'], Normal: ['#A8A878', '#1D1B2B'], Flying: ['#A890F0', '#1D1B2B'],
+      Water: ['#6890F0', '#1D1B2B'], Electric: ['#F8D030', '#1D1B2B'], Fire: ['#F08030', '#1D1B2B'], Bug: ['#A8B820', '#1D1B2B']
+    };
+    const ty = (...ns) => ns.map((n) => ({ n, bg: T[n][0] }));
+    const mv = (n, k) => ({ n, bg: T[k][0], fg: T[k][1] });
+    return {
+      t,
+      stats: [{ k: 'HP', v: 302 }, { k: 'Atk', v: 297 }, { k: 'Def', v: 187 }, { k: 'SpA', v: 147 }, { k: 'SpD', v: 227 }, { k: 'Spe', v: 307 }],
+      moves: [mv('Night Slash', 'Dark'), mv('Ice Punch', 'Ice'), mv('Low Kick', 'Fighting'), mv('Swords Dance', 'Normal')],
+      bench: [
+        { n: 'Ludicolo', img: '/_blob/d4f08a4e05d4a014e78bc852786c0572', types: ty('Water', 'Grass'), her: 'Dark Pulse 33-39%' },
+        { n: 'Victreebel', img: '/_blob/516da89f290c808d5079cb283e0d649d', types: ty('Grass', 'Poison'), her: 'Psychic 70-83%' },
+        { n: 'Flareon', img: '/_blob/987d6b0511770c7da6634b8386bfa9e2', types: ty('Fire'), her: 'Dark Pulse 33-39%' },
+        { n: 'Ninjask', img: '/_blob/1efe784e8ef01285eb000bcb98abd9c9', types: ty('Bug', 'Flying'), her: 'Dark Pulse 60-71%' },
+        { n: 'Minun', img: '/_blob/38ca7dd222b801b05fbae9374f8156b1', types: ty('Electric'), her: 'Dark Pulse 42-50%' }
+      ],
+      record: [{ k: 'Played', v: 0 }, { k: 'Win %', v: 0 }, { k: 'Win streak', v: 0 }, { k: 'Day streak', v: 0 }],
+      cynthia: [
+        { n: 'Spiritomb', img: '/_blob/1dd060717cee2af7d07ff9d9fa20e61a', item: 'Leftovers' },
+        { n: 'Roserade', img: '/_blob/72e6a30d38abc746d79daba8980e2a8f', item: 'Black Sludge' },
+        { n: 'Togekiss', img: '/_blob/ebed17d2d39059be08b84994618584a8', item: 'Expert Belt' },
+        { n: 'Lucario', img: '/_blob/71394d04aabbbf1a84024fcbce12b866', item: 'Life Orb' },
+        { n: 'Milotic', img: '/_blob/72c8d79f1260f3d5ab61766cc61a7917', item: 'Wise Glasses' },
+        { n: 'Garchomp', img: '/_blob/093a9e86e7cd003c980b080e4617f7dc', item: 'Sitrus Berry' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
