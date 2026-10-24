@@ -134,6 +134,15 @@ function MusicToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 type MoveItem = { id: string; pp?: string; label?: string; disabled: boolean };
 type Menu = { kind: 'moves'; moves: MoveItem[]; trapped: boolean } | { kind: 'switch'; forced: boolean } | { kind: 'wait' };
 
+// A Choice item disables every move but the locked one; say so, or the screen looks stuck.
+export function movesPrompt(name: string, moves: { id: string; disabled: boolean }[], item?: string): string {
+  const open = moves.filter(m => !m.disabled);
+  if (item?.startsWith('choice') && open.length === 1 && moves.length > 1) {
+    return `${name} is locked into ${Dex.forGen(4).moves.get(open[0].id).name}.`;
+  }
+  return `What will ${name} do?`;
+}
+
 function menuOf(battle: Battle, switching: boolean): Menu {
   const pending = p1Pending(battle);
   if (pending === 'switch' || (pending === 'move' && switching)) return { kind: 'switch', forced: pending === 'switch' };
@@ -466,7 +475,7 @@ export function App() {
 const FAQ: [string, string][] = [
   ['When does the next team unlock?', 'At midnight in your own time zone. The watch at the top counts down.'],
   ['Can I play more than once a day?', 'You get one official battle a day. Practice battles are unlimited and do not change your record.'],
-  ['Which rules does Daily Cynthia use?', "Pokemon Platinum (Generation 4) singles at level 100, with Sleep Clause: only one of Cynthia's Pokemon can be asleep at a time. Your Pokemon hold no items."],
+  ['Which rules does Daily Cynthia use?', "Pokemon Platinum (Generation 4) singles at level 100, with Sleep Clause: only one of Cynthia's Pokemon can be asleep at a time. Each of your Pokemon holds an item, and no two hold the same one. Every player gets the same items that day."],
   ['Does Cynthia play the same way every time?', 'Yes. She always picks the move with the best expected damage and switches out of bad matchups.'],
   ['What if I reload during the official battle?', 'The battle resumes where you left off. Practice battles do not resume.'],
   ['Do I need an account?', 'No. Your record stays in this browser, and clearing site data resets it. Pick a display name if you want to appear on the leaderboard.'],
@@ -493,14 +502,18 @@ function fromView(p: ClientPokemon): Shown {
 
 // The player's six in daily-team order: HP as the player has seen it so far, and the sim's switch slot
 // (side.pokemon is reordered by switches). A Pokemon not sent out yet is at full HP.
-type Member = { name: string; pct: number; fainted: boolean; active: boolean; slot: number };
+// The client only learns an item from the log: a new one (Trick) or one that is gone (eaten, knocked off).
+type Member = { name: string; pct: number; fainted: boolean; active: boolean; slot: number; item: string; itemGone: boolean };
 
-function party(view: ClientBattle, battle: Battle, team: PokemonSet[]): Member[] {
+export function party(view: ClientBattle, battle: Battle, team: PokemonSet[]): Member[] {
   return team.map(set => {
     const p = view.p1.team.find(q => q.name === set.name);
     return {
       name: set.species, pct: p ? p.hp / p.maxhp * 100 : 100, fainted: !!p?.fainted, active: !!p?.isActive(),
       slot: battle.p1.pokemon.findIndex(q => q.set.species === set.species) + 1,
+      // An item learned from a `[from] item: X` line is stored as the sim's condition id `item:x`.
+      item: p?.item ? dex.items.get(p.item.replace(/^item:/, '')).name : p?.lastItem ? dex.items.get(p.lastItem).name : set.item,
+      itemGone: !!p && ((!p.item && !!p.lastItem) || p.itemEffect === 'knocked off'),
     };
   });
 }
@@ -665,6 +678,7 @@ function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; 
             <span class="tile-top">
               <span class="mon">{set.species}</span>
               <span class="dots">{sp.types.map(t => <span class="dot" style={typeStyle(t)} title={t} />)}</span>
+              {set.item && <span class="held">{set.item}</span>}
             </span>
             <span class="threat">{threat}</span>
           </span>
@@ -679,7 +693,7 @@ function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; 
           <img src={spritePath(set.species, false)} alt="" width={80} height={80} />
           <div class="lead-name">
             <h3>{set.species}</h3>
-            <p>{sp.types.join(' / ')}, {set.ability}</p>
+            <p>{sp.types.join(' / ')}, {set.ability}{set.item && `, ${set.item}`}</p>
           </div>
           <span class="pill-label">Leads</span>
         </div>
@@ -712,6 +726,7 @@ function MemberButtons({ members, canSwitch, onChoose }: { members: Member[]; ca
           <span class="tile-body">
             <span class="tile-top">
               <span class="mon">{m.name}</span>
+              {m.item && <span class="held">{m.itemGone ? <><s>{m.item}</s> gone</> : m.item}</span>}
               <span class="state">{m.fainted ? 'Fainted' : m.active ? 'In battle' : `${Math.round(m.pct)}%`}</span>
             </span>
             {/* The state text already says the HP; the bar is visual only so the button name does not repeat it. */}
@@ -856,7 +871,7 @@ function BattleView(props: BattleProps) {
   const menu = play ? play.menu : menuOf(battle, switching);
   const latest = [...groups].reverse().find(g => g.lines.length)?.lines.at(-1) ?? '';
   const msg = playing || done ? latest
-    : menu.kind === 'moves' ? `What will ${mine.name} do?`
+    : menu.kind === 'moves' ? movesPrompt(mine.name, menu.moves, battle.p1.active[0]?.item)
     : menu.kind === 'switch' && menu.forced ? (mine.fainted ? `${mine.name} fainted!` : 'Choose your next Pokemon')
     : menu.kind === 'switch' ? `Switch ${mine.name} out for?`
     : latest;

@@ -1,7 +1,10 @@
 import { Dex, type PokemonSet } from '@pkmn/sim';
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createBattle, submit } from '../src/game/battle';
-import { typeStyle } from '../src/ui/app';
+import { seedFor } from '../src/game/daily';
+import { dailyTeam } from '../src/game/teams';
+import { movesPrompt, party, typeStyle } from '../src/ui/app';
+import { clientBattle, p1Lines } from '../src/ui/log';
 
 const IVS = { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 };
 const mon = (name: string): PokemonSet => ({
@@ -16,4 +19,26 @@ it('the move buttons render on a recharge turn', () => {
   const { id } = (b.p1.activeRequest as any).active[0].moves[0];
   expect(id).toBe('recharge');
   expect(() => typeStyle(Dex.forGen(4).moves.get(id).type)).not.toThrow();
+});
+
+// The client stores an item it learns from `[from] item: X` as the condition id `item:x`.
+it('a party tile names an item the client learned from a heal line', () => {
+  const date = '2026-10-29';
+  const team = dailyTeam(date);
+  const lead = team.findIndex(s => s.species === 'Gallade');
+  const b = createBattle(seedFor(date, 1), team, lead);
+  submit(b, `move ${team[lead].moves.indexOf('trick') + 1}`); // takes Spiritomb's Leftovers, then heals with it
+  const gallade = party(clientBattle(p1Lines(b)), b, team)[lead];
+  expect(gallade).toMatchObject({ item: 'Leftovers', itemGone: false });
+});
+
+describe('movesPrompt', () => {
+  const moves = [{ id: 'surf', disabled: false }, { id: 'icebeam', disabled: true }, { id: 'energyball', disabled: true }];
+  it('names the locked move under a Choice item', () => {
+    expect(movesPrompt('Ludicolo', moves, 'choicespecs')).toBe('Ludicolo is locked into Surf.');
+  });
+  it('asks as usual otherwise', () => {
+    expect(movesPrompt('Ludicolo', moves, 'leftovers')).toBe('What will Ludicolo do?');
+    expect(movesPrompt('Ludicolo', moves.map(m => ({ ...m, disabled: false })), 'choicespecs')).toBe('What will Ludicolo do?');
+  });
 });

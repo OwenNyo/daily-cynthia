@@ -76,6 +76,13 @@ describe('damagePct', () => {
     expect(withItem[1]).toBeGreaterThan(noItem[1]);
   });
 
+  it('applies a player held item (Choice Band)', () => {
+    const target = toCalc(cyn('Garchomp'));
+    const band = damagePct(toCalc(set('Ursaring', ['facade'], { item: 'Choice Band' })), target, 'facade');
+    const plain = damagePct(toCalc(set('Ursaring', ['facade'])), target, 'facade');
+    expect(band[1]).toBeGreaterThan(plain[1]);
+  });
+
   it('status move gives [0, 0]', () => {
     expect(damagePct(toCalc(cyn('Spiritomb')), toCalc(set('Snorlax', ['bodyslam'])), 'toxic')).toEqual([0, 0]);
   });
@@ -109,5 +116,19 @@ describe('toCalc / fromSim', () => {
     b.setPlayer('p2', { name: 'Cynthia', team: [cyn('Spiritomb')] });
     b.p1.active[0].hp = 100;
     expect(fromSim(b.p1.active[0]).curHP()).toBe(100);
+  });
+});
+
+describe('fromSim held item', () => {
+  it('uses the item held now, not the starting one', () => {
+    const b = new Battle({ formatid: 'gen4customgame' as any, seed: [1, 2, 3, 4] as any });
+    b.setPlayer('p1', { name: 'a', team: [CYNTHIA[0]] });
+    b.setPlayer('p2', { name: 'b', team: [CYNTHIA[1]] });
+    const mon = b.p1.active[0];
+    expect(fromSim(mon).item).toBe('Leftovers');
+    mon.item = '' as any; // knocked off or Tricked away
+    expect(fromSim(mon).item).toBeUndefined();
+    mon.item = 'choicescarf' as any;
+    expect(fromSim(mon).item).toBe('Choice Scarf');
   });
 });

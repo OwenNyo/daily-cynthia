@@ -15,7 +15,8 @@ export function toCalc(set: PokemonSet, live?: { hp: number; status: string; boo
 }
 
 export function fromSim(p: SimPokemon): Pokemon {
-  return toCalc(p.set, { hp: p.hp, status: p.status, boosts: p.boosts });
+  // The item held now: Trick, Knock Off or a used berry change it from the set's.
+  return toCalc({ ...p.set, item: p.item ? dex.items.get(p.item).name : '' }, { hp: p.hp, status: p.status, boosts: p.boosts });
 }
 
 export function damagePct(attacker: Pokemon, defender: Pokemon, moveId: string): [number, number] {

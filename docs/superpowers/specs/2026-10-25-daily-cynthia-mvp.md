@@ -8,7 +8,7 @@ A daily Pokemon puzzle in the style of https://daily-red.com. Every day at local
 
 ## Non-goals (MVP)
 
-- Held items for the player. The data model allows them (see "Items later"), nothing is built.
+- Player-chosen held items. Daily items are fixed per day (see "Player items").
 - Accounts or sign-in.
 - All-time leaderboard (daily only, D19).
 - Battle animations or sound. Text log, HP bars and static sprites only.
@@ -24,7 +24,7 @@ A daily Pokemon puzzle in the style of https://daily-red.com. Every day at local
 | D2 | Greedy AI: best expected damage, plus switch on a bad matchup. |
 | D3 | Player sets: Gen 4 Random Battle sets from `@pkmn/randoms`. The daily seed picks species and set. |
 | D4 | Pool: fully evolved Gen 1-4, uniform random. Exclude legendaries and mythicals. Keep Shedinja, Wobbuffet, Smeargle, Ditto, Unown. |
-| D5 | Fixed sets for everyone. Future items will also be fixed per day, assigned like the team, never player-chosen. |
+| D5 | Fixed sets for everyone. Player items are also fixed per day, assigned like the team, never player-chosen (see "Player items"). |
 | D6 | Daily reset at local midnight. |
 | D7 | Official run uses a fixed per-day battle seed shared by everyone. Practice uses a fresh random seed each time. |
 | D8 | Cynthia: her Platinum in-game moves, level 100, full EVs and good natures. Held items changed by D31. |
@@ -58,7 +58,7 @@ Checked against D1-D16 and the user's preference for simple, robust designs with
 | D29 | No server-side replay verification in the MVP. The Worker stores the client-reported `won`, `fainted`, `turns` and the input log (`seed`, `lead`, `choices`) in D1. | The Worker no longer bundles `@pkmn/sim`, so the free Workers plan is enough (Q2 is moot) and the spike is not needed. Accepted risk R1: the leaderboard can be faked until verification is added. |
 | D30 (Q8) | Working name "Daily Cynthia". Share `#1` is the first public day; `LAUNCH_DATE` stays a placeholder constant until then. Deploy as a Worker named `daily-cynthia` on the user's workers.dev subdomain: https://daily-cynthia.owennyowy.workers.dev. No custom domain. | Owner's choice. |
 | D31 (Q13) | Cynthia keeps her in-game moves and gets one held item on each of her six (table in "Cynthia"). No Full Restores. | A level 100 team with full EVs but almost no items is weaker than intended; Full Restores need healing outside the simulator's rules. |
-| D32 | Item Clause: no two Pokemon on a team hold the same item. Enforced by a data test on `CYNTHIA`, not the format string. | Showdown's Item Clause only runs in the team validator, which `new Battle` never calls (probed). Future daily player items must follow the same rule. |
+| D32 | Item Clause: no two Pokemon on a team hold the same item. Enforced by a data test on `CYNTHIA`, not the format string. | Showdown's Item Clause only runs in the team validator, which `new Battle` never calls (probed). Daily player items follow the same rule through `itemClause` (see "Player items"). |
 
 ## Verified facts (checked today in a scratch install, not in the repo)
 
@@ -135,13 +135,18 @@ Four screens re-render after every turn. Plain TS would need manual DOM updates 
 3. `pool = Dex.forGen(4).species.all()` filtered by `num` 1-493, `!nfe`, `gen.randomSets[id]` exists, no tag in {Restricted Legendary, Sub-Legendary, Mythical}. Copy to a new array.
 4. `prng.shuffle(pool)` (mutates in place).
 5. Walk the shuffled pool, take a species only if its `baseSpecies` is not taken yet, stop at 6.
-6. For each in order: `gen.randomSet(species.name, {})`, then set `level: 100`, `item: ''`.
+6. For each in order: `gen.randomSet(species.name, {})`, then set `level: 100`.
+7. Before `ITEMS_FROM` set `item: ''` on all six. From `ITEMS_FROM` on, apply `itemClause` (see "Player items").
 
 Step 3's `randomSets` check drops only cosmetic forms (Gastrodon-East, Pichu-Spiky-eared).
 
-#### Items later
+#### Player items
 
-`PokemonSet.item` already exists and the battle, calc and AI already read it. Daily items later means one more seeded step in `dailyTeam` (for example, keep the random-battle item instead of clearing it). The step must come after species and set selection so it does not change the teams of days already played, and must give six different items (D32). No items field, flag or UI now.
+From `ITEMS_FROM = '2026-10-25'` (moved from 10-26 on launch day; no official results existed yet) each Pokemon holds the item its random-battle set already picked. Earlier dates keep `item: ''`, so official battles and stored choice logs from those days replay the same. No extra PRNG calls, so species, moves, abilities and EVs are unchanged for every date.
+
+Item Clause (D32), `itemClause`: walk the six in team order. A Pokemon whose item an earlier one already holds gets the first item from `Leftovers`, `Life Orb`, `Expert Belt`, `Lum Berry`, `Sitrus Berry`, `Muscle Band`, `Wise Glasses`, `Quick Claw` that no one on the team holds. Fit rule: Muscle Band only if the set has more physical than special damaging moves, Wise Glasses only if it has more special than physical; a tie skips both. Over 365 days from `ITEMS_FROM` the fallback runs on 361 days, for 885 of 2190 Pokemon.
+
+UI: the lead card and bench rows show the item. Battle party tiles show the item from the client view; an item that is used up or knocked off shows struck through with "gone". The DS shows nothing new.
 
 ### Cynthia (`src/game/cynthia.ts`)
 
@@ -344,6 +349,6 @@ None. Q1-Q13 are settled as D17-D32 (Q2 is moot under D29).
 - R4. Greedy AI ceiling: never sets up, heals or predicts. Upgrade path: short lookahead using the sim.
 - R5. Anonymous IDs: clearing localStorage resets stats and allows a second official attempt under a new ID. Accepted for MVP.
 - R6. Players in earlier timezones can share the team before others play. Same as Daily Red.
-- R7. Random battle sets assume items (Trick, Fling). Without items some moves are weak or fail. Accepted until daily items.
+- R7. Random battle sets assume items (Trick, Fling). Days before `ITEMS_FROM` have no player items, so some moves are weak or fail there. From `ITEMS_FROM` a fallback item (Item Clause) can also miss what a set's moves expect.
 - R8. Pokemon IP on a public site, now including self-hosted sprites. The disclaimer reduces, not removes, takedown risk.
-- R9. The 40-60% player win rate is not checked before launch. Pushing it up: the AI is deterministic and the player sees both sides' damage ranges, so practice teaches her exact replies; the AI attacks into Wobbuffet (Shadow Tag, Counter, Mirror Coat, Destiny Bond) and similar sets; Toxic and Mirror Coat are dead moves for her; no Full Restores; results are client-reported (R1), so a faked win also counts in `wins / played`. Pushing it down: Cynthia has 252 EVs, good natures and six held items (D31) against random-battle EVs, and the player has no items (R7). Teams from a uniform pool vary a lot by day. Measure: the daily `wins / played` from `GET /api/stats/:date` over the first two weeks. Levers if off target: AI status-move rules, Cynthia's item choices, player items.
+- R9. The 40-60% player win rate is not checked before launch. Pushing it up: the AI is deterministic and the player sees both sides' damage ranges, so practice teaches her exact replies; the AI attacks into Wobbuffet (Shadow Tag, Counter, Mirror Coat, Destiny Bond) and similar sets; Toxic and Mirror Coat are dead moves for her; no Full Restores; results are client-reported (R1), so a faked win also counts in `wins / played`. Pushing it down: Cynthia has 252 EVs, good natures and six held items (D31) against random-battle EVs, and the player's items are random-battle picks, often replaced by a fallback (R7). Teams from a uniform pool vary a lot by day. Measure: the daily `wins / played` from `GET /api/stats/:date` over the first two weeks. Levers if off target: AI status-move rules, Cynthia's item choices, the player's fallback items.

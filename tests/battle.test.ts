@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createBattle, FORMAT, p1Pending, replay, submit, summary } from '../src/game/battle';
 import { CYNTHIA } from '../src/game/cynthia';
 import { seedFor } from '../src/game/daily';
-import { dailyTeam } from '../src/game/teams';
-import { autoPlay, withoutTimes } from './helpers';
+import { dailyTeam, ITEMS_FROM } from '../src/game/teams';
+import { addDays, autoPlay, withoutTimes } from './helpers';
 
 const DATE = '2026-10-25';
 const SEED = seedFor(DATE, 1);
@@ -89,5 +89,21 @@ describe('battle driver', () => {
     expect(s.p2Fainted).toHaveLength(6);
     expect(s.p1Fainted).toEqual(sentOut.map(sp => fainted(b.p1, sp)));
     expect(s.p2Fainted).toEqual(CYNTHIA.map(c => fainted(b.p2, c.species)));
+  });
+
+  it('a Choice item locks the move: the request disables the other moves', () => {
+    for (let i = 0; i < 60; i++) {
+      const date = addDays(ITEMS_FROM, i);
+      const team = dailyTeam(date);
+      const lead = team.findIndex(s => s.item.startsWith('Choice'));
+      if (lead < 0) continue;
+      const b = createBattle(seedFor(date, 1), team, lead);
+      submit(b, 'move 1');
+      if (p1Pending(b) !== 'move' || b.p1.active[0].set.species !== team[lead].species) continue;
+      const moves = (b.p1.activeRequest as any).active[0].moves as { disabled?: boolean }[];
+      expect(moves.map(m => !!m.disabled), date).toEqual([false, true, true, true]);
+      return;
+    }
+    throw new Error('no date with a Choice lead that survives turn 1');
   });
 });
