@@ -26,6 +26,7 @@
 .poketch { --focus: var(--lcd-ink); }
 
 * { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); line-height: 1.5; }
 .site-header, main, footer { max-width: 1240px; margin: 0 auto; padding-inline: 20px; }
 img { image-rendering: pixelated; }
@@ -120,6 +121,7 @@ h2[tabindex='-1']:focus { outline: none; }
 .lead-name { flex: 1 1 auto; }
 .lead-name h3 { font-weight: 800; font-size: 20px; }
 .lead-name p { font-size: 13px; color: var(--ink2); }
+.lead-desc { font-size: 12px; line-height: 1.5; color: var(--ink2); }
 .pill-label { font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 999px; background: var(--gold); color: var(--gold-ink); }
 .stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 0; font-family: var(--f-game); text-align: center; }
 .stats dt { font-size: 11px; color: var(--muted); }
@@ -158,6 +160,12 @@ h2[tabindex='-1']:focus { outline: none; }
 .cynthia dl { margin: 0; font-size: 13px; display: flex; flex-direction: column; gap: 8px; }
 .cynthia dt { font-weight: 700; }
 .cynthia dd { margin: 0; color: #CFCBE0; }
+.her-item { margin-top: 4px; font-size: 12px; color: #BDB9D0; }
+/* Her open move list takes the whole row on wide screens, one card per Pokemon. */
+@media (min-width: 900px) {
+  .cynthia-info:has(details[open]) { flex-basis: 100%; }
+  .cynthia details[open] dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px 20px; }
+}
 @media (max-width: 899px) { .cynthia ul { flex-basis: 100%; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); } }
 
 /* Battle log */
@@ -199,6 +207,7 @@ h2[tabindex='-1']:focus { outline: none; }
   border-radius: calc(10 * var(--k)) calc(10 * var(--k)) calc(26 * var(--k)) calc(26 * var(--k));
   padding: calc(16 * var(--k)) calc(24 * var(--k)) calc(18 * var(--k));
 }
+.ds-half:first-child { position: relative; padding-top: max(calc(18 * var(--k)), 32px); }
 .bezel { background: var(--bezel); border-radius: calc(10 * var(--k)); }
 .hinge {
   --k: calc(100cqw / 480);
@@ -244,7 +253,24 @@ h2[tabindex='-1']:focus { outline: none; }
 .hprow { display: flex; align-items: center; gap: calc(4 * var(--k)); margin-top: calc(4 * var(--k)); }
 .hplabel { font-size: calc(10 * var(--k)); background: var(--gold); padding: 0 3px; border-radius: 2px; }
 .hpbox .hpbar { flex: 1 1 auto; height: calc(8 * var(--k)); background: #3A4558; padding: 1px; border-radius: 3px; }
-.hpnum { text-align: right; font-size: max(11px, calc(13 * var(--k))); }
+.hpnum { display: flex; justify-content: flex-end; align-items: center; gap: calc(4 * var(--k)); font-size: max(11px, calc(13 * var(--k))); }
+.hpval { flex: none; margin-left: auto; }
+/* Battle state chips sit left of the HP number, so the box keeps its height. One chip and a count on a narrow DS. */
+.chips { display: flex; gap: 3px; min-width: 0; overflow: hidden; }
+.chip { flex: none; white-space: nowrap; font-size: max(9px, calc(10 * var(--k))); line-height: 1.35; padding: 0 3px; border-radius: 2px; background: #2E3440; color: #fff; }
+.chip.more { background: transparent; color: #2E3440; border: 1px solid #2E3440; }
+.chip.wide { display: none; }
+@container (min-width: 400px) { .chip.wide { display: block; } .chip.narrow { display: none; } }
+/* Weather and each side's conditions, in the case above the top screen. Room for two lines is always kept,
+   so the DS height does not depend on the battle. */
+.field-strip {
+  position: absolute; top: 0; left: calc(24 * var(--k)); right: calc(24 * var(--k)); height: max(calc(18 * var(--k)), 32px);
+  display: flex; align-items: center; justify-content: center; text-align: center; color: #1C2030;
+}
+.field-strip span {
+  font-size: 11px; line-height: 1.25; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+}
 .hpbox .balls { margin-top: calc(4 * var(--k)); }
 .balls { display: flex; gap: calc(3 * var(--k)); }
 .balls span { width: calc(9 * var(--k)); height: calc(9 * var(--k)); border-radius: 50%; border: 1.5px solid #2E3440; background: var(--box); }
@@ -266,16 +292,16 @@ h2[tabindex='-1']:focus { outline: none; }
   text-align: left; border-radius: 12px; border: 3px solid color-mix(in srgb, var(--t) 62%, #000);
   background: var(--t); color: var(--tf); padding: calc(10 * var(--k)) calc(12 * var(--k));
   display: flex; flex-direction: column; justify-content: space-between; gap: calc(6 * var(--k));
-  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.18); min-height: calc(110 * var(--k));
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.18); min-height: calc(84 * var(--k));
 }
-.move:disabled { opacity: 0.5; }
+.move:disabled, .move[aria-disabled='true'] { opacity: 0.5; }
 button.move, .switch, button.tile.member { transition: transform 120ms, box-shadow 120ms, filter 120ms; }
-button.move:not(:disabled):is(:hover, :focus-visible), .switch:not(:disabled):is(:hover, :focus-visible) {
+button.move:not(:disabled, [aria-disabled='true']):is(:hover, :focus-visible), .switch:not(:disabled):is(:hover, :focus-visible) {
   transform: translateY(-2px); filter: brightness(1.08);
   box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.18), 0 4px 6px rgba(0, 0, 0, 0.35);
 }
 button.tile.member:not(:disabled):is(:hover, :focus-visible) { transform: translateY(-2px); filter: brightness(1.08); box-shadow: 0 4px 6px rgba(0, 0, 0, 0.25); }
-button.move:not(:disabled):active, .switch:not(:disabled):active {
+button.move:not(:disabled, [aria-disabled='true']):active, .switch:not(:disabled):active {
   transform: translateY(1px); filter: brightness(1.08); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.18);
 }
 button.tile.member:not(:disabled):active { transform: translateY(1px); box-shadow: none; }
@@ -286,6 +312,19 @@ button.tile.member:not(:disabled):active { transform: translateY(1px); box-shado
 .move-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 4px; font-size: max(11px, calc(13 * var(--k))); }
 .move-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dmg { flex: none; background: var(--box); color: #1C2030; border-radius: 6px; padding: 2px 7px; font-size: max(11px, calc(14 * var(--k))); white-space: nowrap; }
+/* Move details: one line under the moves, full text in the title and each move's description. */
+/* The Info toggle shares the Switch row, so the moves keep room for their text on a narrow DS. */
+.switch-row { display: flex; gap: calc(8 * var(--k)); }
+.switch-row .switch { flex: 1 1 auto; min-width: 0; }
+.info-line {
+  flex: none; font-size: max(11px, calc(13 * var(--k))); line-height: 1.25; height: 2lh; overflow: hidden; color: #C6C4D4;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+}
+.info-toggle { flex: none; font-size: max(12px, calc(14 * var(--k))); }
+.info-toggle:disabled { opacity: 0.5; }
+.info-toggle[aria-pressed='true'] { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); }
+.moves.info-mode .move { border-style: dashed; box-shadow: none; }
+.moves.info-mode .move[aria-pressed='true'] { outline: 3px solid var(--gold); outline-offset: 1px; }
 .switch {
   min-height: max(44px, calc(58 * var(--k))); border-radius: 12px; border: 3px solid #1C2030; background: var(--gold); color: #1C2030;
   display: flex; align-items: center; justify-content: space-between; padding: 0 calc(16 * var(--k));

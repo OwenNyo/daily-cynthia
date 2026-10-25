@@ -59,6 +59,60 @@ const STATUS: Record<string, string> = {
   brn: 'Burned', par: 'Paralyzed', slp: 'Asleep', frz: 'Frozen', psn: 'Poisoned', tox: 'Badly poisoned',
 };
 
+// Battle state shown as chips on the DS, in this order. Keys are @pkmn/client ids.
+const BOOSTS: Record<string, string> = { atk: 'Atk', def: 'Def', spa: 'SpA', spd: 'SpD', spe: 'Spe', accuracy: 'Acc', evasion: 'Eva' };
+const VOLATILES: Record<string, string> = { confusion: 'Confused', substitute: 'Substitute', leechseed: 'Leech Seed', taunt: 'Taunt', encore: 'Encore' };
+const SIDE: Record<string, string> = {
+  stealthrock: 'Stealth Rock', spikes: 'Spikes', toxicspikes: 'Toxic Spikes', reflect: 'Reflect', lightscreen: 'Light Screen',
+  safeguard: 'Safeguard', tailwind: 'Tailwind', mist: 'Mist', luckychant: 'Lucky Chant',
+};
+const WEATHER: Record<string, string> = { Sand: 'Sandstorm', Sun: 'Sun', Rain: 'Rain', Hail: 'Hail' };
+const PSEUDO: Record<string, string> = { trickroom: 'Trick Room', gravity: 'Gravity' };
+
+// What the DS shows of the battle state. `p1`/`p2`: the active Pokemon's stat changes, then its volatile states, as
+// chips in its HP box. `field`: one line for the strip above the top screen, e.g.
+// "Rain. Her side: Spikes x1, Toxic Spikes x1. Your side: Reflect", or '' when there is nothing.
+export function chipLabels(view: ClientBattle): { field: string; p1: string[]; p2: string[] } {
+  const mon = (s: ClientBattle['p1']) => {
+    const p = onField(s);
+    const out: string[] = [];
+    for (const [k, label] of Object.entries(BOOSTS)) {
+      const n = (p?.boosts as Record<string, number> | undefined)?.[k];
+      if (n) out.push(`${label} ${n > 0 ? '+' : ''}${n}`);
+    }
+    for (const [k, label] of Object.entries(VOLATILES)) if (p?.volatiles[k]) out.push(label);
+    return out;
+  };
+  const side = (s: ClientBattle['p1']) => Object.entries(SIDE).filter(([k]) => s.sideConditions[k])
+    .map(([k, label]) => (k === 'spikes' || k === 'toxicspikes' ? `${label} x${s.sideConditions[k].level}` : label)).join(', ');
+  const global = [
+    ...(view.field.weather && WEATHER[view.field.weather] ? [WEATHER[view.field.weather]] : []),
+    ...Object.entries(PSEUDO).filter(([k]) => view.field.pseudoWeather[k]).map(([, label]) => label),
+  ].join(', ');
+  const [her, mine] = [side(view.p2), side(view.p1)];
+  const field = [global, her && `Her side: ${her}`, mine && `Your side: ${mine}`].filter(Boolean).join('. ');
+  return { field, p1: mon(view.p1), p2: mon(view.p2) };
+}
+
+// What a click, Enter or Space on a move card does. Unusable moves stay focusable so info mode can show them.
+export const moveAction = (infoMode: boolean, unusable: boolean): 'info' | 'use' | null =>
+  infoMode ? 'info' : unusable ? null : 'use';
+
+// A move's category, power and accuracy, for the info line and Cynthia's move list.
+export function moveStats(id: string): string {
+  const m = dex.moves.get(id);
+  // Moves like Grass Knot or Mirror Coat work out their damage in battle, so the dex gives them 0 power.
+  const power = m.category === 'Status' ? '-' : m.basePower ? m.basePower : 'varies';
+  return [m.category, `Power ${power}`, m.accuracy === true ? 'Always hits' : `Accuracy ${m.accuracy}%`].join(' · ');
+}
+// "Ability: what it does. Item: what it does." for titles and screen readers.
+const abilityInfo = (a: string) => `${a}: ${dex.abilities.get(a).shortDesc}`;
+const itemInfo = (i: string) => `${i}: ${dex.items.get(i).shortDesc}`;
+const heldInfo = (ability: string, item: string) => [abilityInfo(ability), ...(item ? [itemInfo(item)] : [])].join(' ');
+
+// Hidden Power's typed variants have no short description.
+export const moveInfo = (id: string) => [moveStats(id), dex.moves.get(id).shortDesc].filter(Boolean).join(' · ');
+
 const hpColor = (pct: number) => (pct < 20 ? 'var(--hp-red)' : pct < 50 ? 'var(--hp-yellow)' : 'var(--hp-green)');
 
 type Live = { battle: Battle; official: boolean; done?: Summary };
@@ -503,7 +557,7 @@ function fromView(p: ClientPokemon): Shown {
 // The player's six in daily-team order: HP as the player has seen it so far, and the sim's switch slot
 // (side.pokemon is reordered by switches). A Pokemon not sent out yet is at full HP.
 // The client only learns an item from the log: a new one (Trick) or one that is gone (eaten, knocked off).
-type Member = { name: string; pct: number; fainted: boolean; active: boolean; slot: number; item: string; itemGone: boolean };
+type Member = { name: string; pct: number; fainted: boolean; active: boolean; slot: number; item: string; itemGone: boolean; ability: string };
 
 export function party(view: ClientBattle, battle: Battle, team: PokemonSet[]): Member[] {
   return team.map(set => {
@@ -514,6 +568,7 @@ export function party(view: ClientBattle, battle: Battle, team: PokemonSet[]): M
       // An item learned from a `[from] item: X` line is stored as the sim's condition id `item:x`.
       item: p?.item ? dex.items.get(p.item.replace(/^item:/, '')).name : p?.lastItem ? dex.items.get(p.lastItem).name : set.item,
       itemGone: !!p && ((!p.item && !!p.lastItem) || p.itemEffect === 'knocked off'),
+      ability: set.ability,
     };
   });
 }
@@ -556,17 +611,39 @@ function CountTo({ value }: { value: number }) {
   return <>{n}</>;
 }
 
-function HpBox({ s, foe, children }: { s: Shown; foe: boolean; children?: ComponentChildren }) {
+// Chips that fit in `budget` px beside the HP number, in order, with "+N more" for the rest; when not even one
+// fits with that, only the count. Width per chip is an upper bound for the 9-10px game font.
+const chipWidth = (t: string) => 6 + 5 * t.length;
+export function fitChips(labels: string[], budget: number): string[] {
+  for (let n = labels.length; n > 0; n--) {
+    const row = [...labels.slice(0, n), ...(n < labels.length ? [`+${labels.length - n} more`] : [])];
+    if (row.reduce((w, t) => w + chipWidth(t) + 3, -3) <= budget) return row;
+  }
+  return labels.length ? [`${labels.length} ${labels.length > 1 ? 'effects' : 'effect'}`] : [];
+}
+// Room beside the HP number in the smaller HP box, measured: 69px on a 320px-wide page, 109px from a 400px-wide DS.
+const CHIP_ROOM = { narrow: 66, wide: 105 };
+
+function HpBox({ s, foe, chips = [], children }: { s: Shown; foe: boolean; chips?: string[]; children?: ComponentChildren }) {
   const pct = s.hp / s.maxhp * 100;
   return (
     <div class={`hpbox ${foe ? 'foe' : 'mine'}`}>
       <p class="hpname">
-        <span>{s.name}</span>
+        <span>{s.name}{chips.length > 0 && <span class="sr-only">, {chips.join(', ')}</span>}</span>
         {s.status && <abbr class={`st-${s.status}`} title={STATUS[s.status]}>{s.status.toUpperCase()}</abbr>}
         <span class="lv">Lv{s.level}</span>
       </p>
       <p class="hprow"><span class="hplabel" aria-hidden="true">HP</span><HpBar name={s.name} pct={pct} /></p>
-      <p class="hpnum">{foe ? `${Math.round(pct)}%` : <><CountTo value={s.hp} />/{s.maxhp}</>}</p>
+      <p class="hpnum">
+        {chips.length > 0 && (
+          <span class="chips" aria-hidden="true" title={chips.join(', ')}>
+            {(['narrow', 'wide'] as const).map(size => fitChips(chips, CHIP_ROOM[size]).map(c => (
+              <span class={`chip ${size} ${chips.includes(c) ? '' : 'more'}`}>{c}</span>
+            )))}
+          </span>
+        )}
+        <span class="hpval">{foe ? `${Math.round(pct)}%` : <><CountTo value={s.hp} />/{s.maxhp}</>}</span>
+      </p>
       {children}
     </div>
   );
@@ -574,10 +651,10 @@ function HpBox({ s, foe, children }: { s: Shown; foe: boolean; children?: Compon
 
 // The DS: top screen with the scene and the latest message, hinge, bottom screen with whatever `bottom` is.
 // While a turn plays, `hit` flashes the side that took damage this step, and a click on the top screen skips.
-function Ds({ foe, mine, herFainted, msg, bottom, bottomRef, playing, hit, onSkip }: {
+function Ds({ foe, mine, herFainted, msg, bottom, bottomRef, playing, hit, onSkip, chips }: {
   foe: Shown; mine: Shown; herFainted: boolean[]; msg: string; bottom: ComponentChildren;
   bottomRef?: { current: HTMLDivElement | null }; playing?: boolean; hit?: Hit;
-  onSkip?: () => void;
+  onSkip?: () => void; chips?: ReturnType<typeof chipLabels>;
 }) {
   const skipRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -588,14 +665,15 @@ function Ds({ foe, mine, herFainted, msg, bottom, bottomRef, playing, hit, onSki
   return (
     <div class={`ds ${playing ? 'playing' : ''}`}>
       <div class="ds-half">
+        {chips?.field && <p class="field-strip" title={chips.field}><span>{chips.field}</span></p>}
         <div class="bezel">
           <div class="screen top" onClick={playing ? onSkip : undefined}>
             <img class="bg" src="/bg/champion-room.png" alt="" />
             {/* A new key restarts the flash when the same Pokemon is hit on consecutive steps. */}
             <img key={`foe-${foe.name}-${hit?.foe ? hit.step : ''}`} class={cls('foe', foe)} src={spritePath(foe.name, false)} alt={foe.name} />
             <img key={`mine-${mine.name}-${hit?.mine ? hit.step : ''}`} class={cls('mine', mine)} src={spritePath(mine.name, true)} alt={`${mine.name}, seen from behind`} />
-            <HpBox key={`foe-${foe.name}`} s={foe} foe><Balls fainted={herFainted} who="Cynthia" /></HpBox>
-            <HpBox key={`mine-${mine.name}`} s={mine} foe={false} />
+            <HpBox key={`foe-${foe.name}`} s={foe} foe chips={chips?.p2}><Balls fainted={herFainted} who="Cynthia" /></HpBox>
+            <HpBox key={`mine-${mine.name}`} s={mine} foe={false} chips={chips?.p1} />
             <p class="textbox">{msg}</p>
             {playing && <button ref={skipRef} type="button" class="skip" onClick={e => { e.stopPropagation(); onSkip?.(); }}>Skip</button>}
           </div>
@@ -672,7 +750,7 @@ function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; 
     const threat = `Spiritomb's best: ${moveName(hers.move)} ${dmgLabel(hers.move, hers.range)}`;
     if (i !== lead) {
       return (
-        <button type="button" class="tile bench" onClick={() => onLead(i)}>
+        <button type="button" class="tile bench" title={heldInfo(set.ability, set.item)} onClick={() => onLead(i)}>
           <img src={spritePath(set.species, false)} alt="" width={56} height={56} />
           <span class="tile-body">
             <span class="tile-top">
@@ -681,6 +759,7 @@ function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; 
               {set.item && <span class="held">{set.item}</span>}
             </span>
             <span class="threat">{threat}</span>
+            <span class="sr-only">{heldInfo(set.ability, set.item)}</span>
           </span>
           <span class="muted">Set as lead</span>
         </button>
@@ -697,6 +776,7 @@ function PartyPanel({ team, lead, onLead }: { team: PokemonSet[]; lead: number; 
           </div>
           <span class="pill-label">Leads</span>
         </div>
+        <p class="lead-desc">{abilityInfo(set.ability)}{set.item && <><br />{itemInfo(set.item)}</>}</p>
         <dl class="stats">
           {Object.entries(me.stats).map(([k, v]) => <div><dt>{STAT[k]}</dt><dd>{v}</dd></div>)}
         </dl>
@@ -720,7 +800,7 @@ function MemberButtons({ members, canSwitch, onChoose }: { members: Member[]; ca
   return (
     <>
       {members.map(m => (
-        <button type="button" class={`tile member ${m.active ? 'active' : ''} ${m.fainted ? 'fainted' : ''}`}
+        <button type="button" class={`tile member ${m.active ? 'active' : ''} ${m.fainted ? 'fainted' : ''}`} title={heldInfo(m.ability, m.item)}
           disabled={!canSwitch || m.fainted || m.active} onClick={() => onChoose(`switch ${m.slot}`)}>
           <img src={spritePath(m.name, false)} alt="" width={48} height={48} />
           <span class="tile-body">
@@ -731,6 +811,7 @@ function MemberButtons({ members, canSwitch, onChoose }: { members: Member[]; ca
             </span>
             {/* The state text already says the HP; the bar is visual only so the button name does not repeat it. */}
             <HpBar name={m.name} pct={m.pct} hidden />
+            <span class="sr-only">{heldInfo(m.ability, m.item)}</span>
           </span>
         </button>
       ))}
@@ -767,7 +848,15 @@ function CynthiaRow({ view }: { view: ClientBattle | null }) {
         <details>
           <summary>Show her moves</summary>
           <dl>
-            {CYNTHIA.map(set => <div><dt>{set.species} ({set.ability}, {set.nature})</dt><dd>{set.moves.map(moveName).join(', ')}</dd></div>)}
+            {CYNTHIA.map(set => (
+              <div>
+                <dt>{set.species} ({set.ability}, {set.nature})</dt>
+                <dd>
+                  {set.moves.map(m => <p>{moveName(m)}: {moveStats(m)}</p>)}
+                  <p class="her-item">{itemInfo(set.item)}</p>
+                </dd>
+              </div>
+            ))}
           </dl>
         </details>
       </div>
@@ -885,12 +974,27 @@ function BattleView(props: BattleProps) {
   // same move as last time when it is still usable, else to the first usable button, so it does not drop to <body>.
   const bottom = useRef<HTMLDivElement>(null);
   const lastMove = useRef<number | null>(null);
+  // The info line shows the hovered move, else the one tapped in info mode, else the one the player focused.
+  // In info mode a tap on a move shows its details instead of using it.
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const [infoMode, setInfoMode] = useState(false);
+  const info = hovered ?? picked ?? focused;
+  useEffect(() => { setHovered(null); setPicked(null); setFocused(null); setInfoMode(false); }, [battle.log.length]);
+  // Focus the effect below moves is not the player's, so it does not fill the info line.
+  const autoFocused = useRef<EventTarget | null>(null);
   useEffect(() => {
     const el = bottom.current;
     if (playing || !el) return;
+    const usable = (b: HTMLButtonElement | null | undefined) => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true' ? b : null;
     const same = lastMove.current === null ? null : el.querySelectorAll<HTMLButtonElement>('button.move')[lastMove.current];
-    (el.querySelector<HTMLElement>('[data-autofocus]') ?? (same && !same.disabled ? same : null) ??
-      el.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
+    const target = el.querySelector<HTMLElement>('[data-autofocus]') ?? usable(same) ??
+      el.querySelector<HTMLElement>('button:not(:disabled):not([aria-disabled="true"])');
+    if (!target || target === document.activeElement) return;
+    autoFocused.current = target;
+    target.focus();
+    autoFocused.current = null;
   }, [battle.log.length, switching, !!done, playing]);
 
   let screen: ComponentChildren;
@@ -920,18 +1024,38 @@ function BattleView(props: BattleProps) {
   } else if (menu.kind === 'moves') {
     screen = (
       <>
-        <div class="moves">
-          {menu.moves.map((m, i) => (
-            <button type="button" class="move" style={typeStyle(dex.moves.get(m.id).type)} disabled={playing || m.disabled}
-              onClick={() => { lastMove.current = i; onChoose(`move ${i + 1}`); }}>
-              <MoveFace id={m.id} pp={m.pp} label={m.label} />
-            </button>
-          ))}
+        <div class={`moves ${infoMode ? 'info-mode' : ''}`}>
+          {menu.moves.map((m, i) => {
+            // The sim's "recharge" pseudo-move has no details.
+            const id = m.id === 'recharge' ? null : m.id;
+            return (
+              <button type="button" class="move" style={typeStyle(dex.moves.get(m.id).type)} disabled={playing}
+                aria-disabled={m.disabled || undefined}
+                aria-pressed={infoMode ? info === m.id : undefined} aria-describedby={id ? `move-info-${i}` : undefined}
+                onMouseEnter={() => setHovered(id)} onMouseLeave={() => setHovered(null)}
+                onFocus={e => { if (autoFocused.current !== e.currentTarget) setFocused(id); }} onBlur={() => setFocused(null)}
+                onClick={() => {
+                  const act = moveAction(infoMode, m.disabled);
+                  if (act === 'info') setPicked(id);
+                  if (act === 'use') { lastMove.current = i; onChoose(`move ${i + 1}`); }
+                }}>
+                <MoveFace id={m.id} pp={m.pp} label={m.label} />
+                {m.id !== 'recharge' && <span id={`move-info-${i}`} hidden>{moveInfo(m.id)}</span>}
+              </button>
+            );
+          })}
         </div>
-        <button type="button" class="switch" disabled={playing || menu.trapped} onClick={() => onSwitching(true)}>
-          <span>Switch</span>
-          <Balls fainted={members.map(m => m.fainted)} who="You" />
-        </button>
+        <p class="info-line" title={info ? moveInfo(info) : undefined}>
+          {info ? moveInfo(info) : infoMode ? 'Tap a move for details' : 'Hover or focus a move for details'}
+        </p>
+        <div class="switch-row">
+          <button type="button" class="switch" disabled={playing || menu.trapped} onClick={() => onSwitching(true)}>
+            <span>Switch</span>
+            <Balls fainted={members.map(m => m.fainted)} who="You" />
+          </button>
+          <button type="button" class="pill info-toggle" aria-label="Move info mode" aria-pressed={infoMode} disabled={playing}
+            onClick={() => { setInfoMode(!infoMode); setPicked(null); }}>Info</button>
+        </div>
       </>
     );
   } else {
@@ -941,7 +1065,7 @@ function BattleView(props: BattleProps) {
   return (
     <>
       <Ds foe={foe} mine={mine} herFainted={herFainted(view)} msg={msg} bottom={screen} bottomRef={bottom}
-        playing={playing} hit={hit} onSkip={onSkip} />
+        playing={playing} hit={hit} onSkip={onSkip} chips={chipLabels(view)} />
       {herBest && (
         <p class={`strip ${playing ? 'hold' : ''}`}>
           <img src={spritePath(sim.foe.species.name, false)} alt="" width={40} height={40} />
