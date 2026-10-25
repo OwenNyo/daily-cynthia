@@ -7,7 +7,7 @@ import { damagePct, fromSim, slotMoveId, toCalc } from '../game/calc';
 import { CYNTHIA } from '../game/cynthia';
 import { dayNumber, localDate, seedFor } from '../game/daily';
 import { validName } from '../game/name';
-import { shareText } from '../game/share';
+import { shareText, SITE_URL } from '../game/share';
 import { computeStats } from '../game/stats';
 import { dailyTeam } from '../game/teams';
 import { getLeaderboard, getStats, postResult, type LeaderRow, type ResultBody, type Stats } from './api';
@@ -374,7 +374,7 @@ export function App() {
             {live ? (
               <BattleView live={live} view={view} hit={hit} play={play} members={members} switching={switching}
                 onSwitching={setSwitching} onChoose={choose} onSkip={() => setPlay(null)}
-                share={live.done && live.official ? shareText(date, live.done, location.origin) : null}
+                share={live.done && live.official ? shareText(date, live.done, SITE_URL) : null}
                 copied={copied} onCopy={copy} onPractice={() => start(false)} onHome={home} groups={groups} />
             ) : (
               <>
@@ -383,7 +383,7 @@ export function App() {
                   herFainted={CYNTHIA.map(() => false)}
                   msg={playedToday ? "Today's battle is done. Come back tomorrow." : 'Cynthia sent out Spiritomb! Pick your lead, then battle.'}
                   bottom={todayResult
-                    ? <Result s={todayResult} share={shareText(date, todayResult, location.origin)} copied={copied} onCopy={copy} />
+                    ? <Result s={todayResult} share={shareText(date, todayResult, SITE_URL)} copied={copied} onCopy={copy} />
                     : playedToday
                       ? <p class="screen-note">Today's official battle is done: you {store.history[date] === 'W' ? 'won' : 'lost'}.</p>
                       : <MovePreview set={team[lead]} />}
