@@ -13,7 +13,7 @@ import { dailyTeam } from '../game/teams';
 import { getLeaderboard, getStats, postResult, type LeaderRow, type ResultBody, type Stats } from './api';
 import { clientBattle, groupLog, logSteps, p1Lines, TURN, type LogGroup } from './log';
 import { spritePath } from './sprites';
-import { finishOfficial, KEY, load, save, update, withName, type Save } from './storage';
+import { finishOfficial, KEY, load, save, update, withName, type Result, type Save } from './storage';
 
 const dex = Dex.forGen(4);
 type CalcMon = ReturnType<typeof toCalc>;
@@ -142,6 +142,23 @@ export function resume(s: Save): { s: Save; live: Live | null; post?: ResultBody
   if (!battle.ended) return { s, live: { battle, official: true } };
   const done = summary(battle);
   return { s: finishOfficial(s, done), live: { battle, official: true, done }, post: resultBody(s, done) };
+}
+
+const watchable = (r?: Result): r is Result & { lead: number; choices: string[] } =>
+  !!r && Number.isInteger(r.lead) && Array.isArray(r.choices);
+
+// The day's finished official battle rebuilt from its stored result, for "Watch again". Never saved or posted.
+// null for results from before lead and choices were stored, and for a log that fails or does not end.
+export function watchAgain(date: string, r?: Result): Live | null {
+  if (!watchable(r)) return null;
+  let battle: Battle;
+  try {
+    battle = replay(seedFor(date, 1), dailyTeam(date), r.lead, r.choices);
+  } catch (e) {
+    console.error('watch again failed', e);
+    return null;
+  }
+  return battle.ended ? { battle, official: true, done: summary(battle) } : null;
 }
 
 // Another tab has played or finished this official battle since this tab last saved it.
@@ -362,6 +379,17 @@ export function App() {
     }
   };
 
+  // Plays even with reduced motion: the player asked to watch.
+  const onWatch = () => {
+    const w = watchAgain(date, load().results?.[date]); // latest save, like the rest of the official flow
+    if (!w) return;
+    setSwitching(false);
+    setCopied(false);
+    setLive(w);
+    // Opens on the Turn 1 header, like a new battle: before it a side has no Pokemon out for the DS to show.
+    setPlay({ shown: logSteps(p1Lines(w.battle)).findIndex(s => TURN.test(s.text)) + 1, menu: { kind: 'wait' } });
+  };
+
   const onName = (v: string) => {
     setNameInput(v);
     if (withName(store, v) !== store) persist(s => withName(s, v));
@@ -429,7 +457,8 @@ export function App() {
               <BattleView live={live} view={view} hit={hit} play={play} members={members} switching={switching}
                 onSwitching={setSwitching} onChoose={choose} onSkip={() => setPlay(null)}
                 share={live.done && live.official ? shareText(date, live.done, SITE_URL) : null}
-                copied={copied} onCopy={copy} onPractice={() => start(false)} onHome={home} groups={groups} />
+                copied={copied} onCopy={copy} onPractice={() => start(false)} onHome={home} groups={groups}
+                onWatch={live.official && watchable(store.results?.[date]) ? onWatch : undefined} />
             ) : (
               <>
                 <Ds
@@ -444,6 +473,7 @@ export function App() {
                 />
                 <div class="actions">
                   {!playedToday && !openElsewhere && <button type="button" class="primary" onClick={() => start(true)}>Battle Cynthia</button>}
+                  {watchable(todayResult) && <button type="button" class="secondary" onClick={onWatch}>Watch again</button>}
                   <button type="button" class="secondary" onClick={() => start(false)}>Practice</button>
                 </div>
                 <p class="hint">
@@ -948,11 +978,11 @@ type BattleProps = {
   live: Live; view: ClientBattle; hit?: Hit; play: Playback | null; members: Member[];
   switching: boolean; onSwitching: (b: boolean) => void; onChoose: (c: string) => void; onSkip: () => void;
   share: string | null; copied: boolean; onCopy: (t: string) => void; onPractice: () => void; onHome: () => void;
-  groups: LogGroup[];
+  groups: LogGroup[]; onWatch?: () => void;
 };
 
 function BattleView(props: BattleProps) {
-  const { live, view, hit, play, members, switching, onSwitching, onChoose, onSkip, share, copied, onCopy, onPractice, onHome, groups } = props;
+  const { live, view, hit, play, members, switching, onSwitching, onChoose, onSkip, share, copied, onCopy, onPractice, onHome, groups, onWatch } = props;
   const { battle, done } = live;
   const playing = play !== null;
   const mine = fromView(onField(view.p1));
@@ -1003,6 +1033,7 @@ function BattleView(props: BattleProps) {
       <>
         <Result s={done} share={share} copied={copied} onCopy={onCopy} autofocus />
         <div class="screen-actions">
+          {onWatch && <button type="button" class="pill" onClick={onWatch}>Watch again</button>}
           <button type="button" class="pill" onClick={onPractice}>Practice</button>
           <button type="button" class="pill" onClick={onHome}>Back to home</button>
         </div>
@@ -1059,7 +1090,7 @@ function BattleView(props: BattleProps) {
       </>
     );
   } else {
-    screen = <p class="screen-note">Waiting...</p>;
+    screen = <p class="screen-note">{done ? 'Watching your battle again.' : 'Waiting...'}</p>;
   }
 
   return (

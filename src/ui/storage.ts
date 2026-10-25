@@ -2,11 +2,13 @@ import type { Summary } from '../game/battle';
 import { validName } from '../game/name';
 import type { History } from '../game/stats';
 
+export type Result = Summary & { lead?: number; choices?: string[] }; // lead and choices are absent for days played before Watch again
+
 export type Save = {
   playerId: string;
   name: string;
   history: History;
-  results?: Record<string, Summary>; // official summaries by date, so the result screen survives a reload
+  results?: Record<string, Result>; // official summaries by date, so the result screen survives a reload
   current?: { date: string; lead: number; choices: string[] };
   music?: boolean;
 };
@@ -66,7 +68,7 @@ export function finishOfficial(s: Save, done?: Summary): Save {
   return {
     ...rest,
     history: { ...s.history, [date]: (done?.won ?? false) ? 'W' : 'L' },
-    ...(done && { results: { ...s.results, [date]: done } }),
+    ...(done && { results: { ...s.results, [date]: { ...done, lead: current!.lead, choices: current!.choices } } }),
   };
 }
 

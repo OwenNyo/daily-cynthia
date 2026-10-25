@@ -67,8 +67,19 @@ describe('storage', () => {
     const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 0, choices: [] } };
     const done = { won: true, turns: 12, p1Fainted: [true, false, false, false, false, false], p2Fainted: [true, true, true, true, true, true] };
     const saved = finishOfficial(s, done);
-    expect(saved.results).toEqual({ '2026-10-25': done });
+    expect(saved.results).toEqual({ '2026-10-25': { ...done, lead: 0, choices: [] } });
     expect(saved.history).toEqual({ '2026-10-25': 'W' });
+  });
+
+  it('finishOfficial keeps the lead and choices with the summary', () => {
+    const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 2, choices: ['move 1', 'switch 3'] } };
+    const done = { won: false, turns: 2, p1Fainted: Array(6).fill(true), p2Fainted: Array(6).fill(false) };
+    expect(finishOfficial(s, done).results?.['2026-10-25']).toMatchObject({ lead: 2, choices: ['move 1', 'switch 3'] });
+  });
+
+  it('finishOfficial without a summary writes no result for the day', () => {
+    const s: Save = { playerId: 'x', name: '', history: {}, current: { date: '2026-10-25', lead: 2, choices: ['move 1'] } };
+    expect(finishOfficial(s).results?.['2026-10-25']).toBeUndefined();
   });
 
   it('finishOfficial keeps earlier summaries', () => {
@@ -122,6 +133,14 @@ describe('storage', () => {
       results: { '2026-10-24': good, '2026-10-23': { won: 'yes' }, '2026-10-22': null, '2026-10-21': { ...good, p1Fainted: [true] } },
     }));
     expect(load(store).results).toEqual({ '2026-10-24': good });
+  });
+
+  it('results with and without lead and choices load unchanged', () => {
+    const store = memoryStorage();
+    const old = { won: true, turns: 9, p1Fainted: Array(6).fill(false), p2Fainted: Array(6).fill(true) };
+    const kept = { ...old, lead: 1, choices: ['move 1', 'switch 2'] };
+    store.setItem(KEY, JSON.stringify({ playerId: 'x', name: '', history: {}, results: { '2026-10-24': old, '2026-10-25': kept } }));
+    expect(load(store).results).toEqual({ '2026-10-24': old, '2026-10-25': kept });
   });
 
   it.each(['[]', 'null', '"x"'])('results of the wrong type (%s) are dropped', raw => {
