@@ -1,0 +1,12 @@
+{
+  "name": "Daily Cynthia",
+  "short_name": "Cynthia",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#E4E2EC",
+  "theme_color": "#17161F",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
