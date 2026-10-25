@@ -56,7 +56,7 @@ Checked against D1-D16 and the user's preference for simple, robust designs with
 | D27 (Q12) | Accept the sprite copyright risk under the non-affiliation disclaimer. | Follows from D13 and D14 (public site, self-hosted sprites); see R8. |
 | D28 | `POST /api/result` accepts a `date` only if it is a real calendar date and within 1 calendar day of the server's UTC date. | Basic input validation. Every local date on Earth is UTC date -1, 0 or +1, so older dates are rejected and old days cannot be filled in later. |
 | D29 | No server-side replay verification in the MVP. The Worker stores the client-reported `won`, `fainted`, `turns` and the input log (`seed`, `lead`, `choices`) in D1. | The Worker no longer bundles `@pkmn/sim`, so the free Workers plan is enough (Q2 is moot) and the spike is not needed. Accepted risk R1: the leaderboard can be faked until verification is added. |
-| D30 (Q8) | Working name "Daily Cynthia". Share `#1` is the first public day; `LAUNCH_DATE` stays a placeholder constant until then. Deploy as a Worker named `daily-cynthia` on the user's workers.dev subdomain: https://daily-cynthia.owennyowy.workers.dev. No custom domain. | Owner's choice. |
+| D30 (Q8) | Working name "Daily Cynthia". Share `#1` is the first public day; `LAUNCH_DATE` stays a placeholder constant until then. Deploy as a Worker named `daily-cynthia` on the user's workers.dev subdomain: https://daily-cynthia.owennyowy.workers.dev, later moved to the custom domain https://daily-cynthia.owennyo.com (set up in the Cloudflare dashboard). `workers_dev` and `preview_urls` are false in `wrangler.jsonc`, so the workers.dev address no longer serves. | Owner's choice. |
 | D31 (Q13) | Cynthia keeps her in-game moves and gets one held item on each of her six (table in "Cynthia"). No Full Restores. | A level 100 team with full EVs but almost no items is weaker than intended; Full Restores need healing outside the simulator's rules. |
 | D32 | Item Clause: no two Pokemon on a team hold the same item. Enforced by a data test on `CYNTHIA`, not the format string. | Showdown's Item Clause only runs in the team validator, which `new Battle` never calls (probed). Daily player items follow the same rule through `itemClause` (see "Player items"). |
 
@@ -325,7 +325,7 @@ Endpoints (`worker/index.ts`):
 - `GET /api/leaderboard/:date` returns up to 50 `{ name, fainted, turns }` from winning results only (`WHERE won = 1`, D19) ordered by `fainted ASC, turns ASC, created_at ASC`. Empty name shows as `Anonymous`.
 - Anything else: `env.ASSETS.fetch(request)`.
 
-`wrangler.jsonc`: `name: "daily-cynthia"`, `main: "worker/index.ts"`, `assets: { directory: "./dist", run_worker_first: ["/api/*"] }`, D1 binding `DB`, `migrations_dir: "migrations"`. Deployed to https://daily-cynthia.owennyowy.workers.dev on the free Workers plan (D30). Free plan limits that matter: 3 MB compressed bundle, 10 ms CPU per request; a JSON parse plus one D1 insert fits both.
+`wrangler.jsonc`: `name: "daily-cynthia"`, `main: "worker/index.ts"`, `assets: { directory: "./dist", run_worker_first: ["/api/*"] }`, D1 binding `DB`, `migrations_dir: "migrations"`. Deployed to https://daily-cynthia.owennyo.com on the free Workers plan (D30). Free plan limits that matter: 3 MB compressed bundle, 10 ms CPU per request; a JSON parse plus one D1 insert fits both.
 
 ## Assumptions
 
